@@ -91,6 +91,8 @@ h1, h2, h3, h4, p, ul, ol, dl, dd, blockquote { margin: 0; padding: 0; }
 ul, ol { list-style: none; }
 a { color: var(--accent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Sans cette règle, un « display » posé sur un élément l'emporte sur l'attribut hidden. */
+[hidden] { display: none !important; }
 .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .ico.petit { width: 15px; height: 15px; stroke-width: 2; }
 
