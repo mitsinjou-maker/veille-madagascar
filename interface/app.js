@@ -95,7 +95,11 @@ async function chargerDonnees() {
   return !!archive;
 }
 
+const etatEstVide = e => !e || !Object.keys(etatVide()).some(cle => e[cle] && typeof e[cle] === 'object' && Object.keys(e[cle]).length);
+
 async function chargerEtat() {
+  let copie = null;
+  try { copie = JSON.parse(localStorage.getItem(CLE_ETAT) || 'null'); } catch { /* stockage indisponible */ }
   let etat = null;
   try {
     const r = await fetch('api/etat', { cache: 'no-store' });
@@ -103,10 +107,14 @@ async function chargerEtat() {
     etat = await r.json();
   } catch {
     E.api = false;
-    try { etat = JSON.parse(localStorage.getItem(CLE_ETAT) || 'null'); } catch { /* stockage indisponible */ }
+    etat = copie;
   }
-  E.etat = { ...etatVide(), ...(etat || {}) };
-  for (const cle of Object.keys(etatVide())) if (!E.etat[cle] || typeof E.etat[cle] !== 'object') E.etat[cle] = {};
+  // Fichier d'état perdu ou vidé côté serveur : on repart de la copie que ce navigateur a gardée.
+  const aRestaurer = E.api && etatEstVide(etat) && !etatEstVide(copie);
+  if (aRestaurer) etat = copie;
+  E.etat = { ...etatVide() };
+  for (const cle of Object.keys(etatVide())) if (etat && etat[cle] && typeof etat[cle] === 'object') E.etat[cle] = etat[cle];
+  if (aRestaurer) sauver();
 }
 
 let minuterieEtat;
