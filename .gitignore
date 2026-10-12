@@ -1,0 +1,6 @@
+# Fichiers produits par l'outil : archive des annonces, état personnel, résumé du jour
+donnees/opportunites.json
+donnees/etat.json
+donnees/resume.txt
+
+node_modules/

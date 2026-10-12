@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Veille Madagascar</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <nav class="barre" aria-label="Sections">
+    <div class="marque">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg>
+      <div><b>Veille</b><span>Madagascar</span></div>
+    </div>
+    <ul class="menu" id="menu"></ul>
+    <div class="pied">
+      <p class="maj" id="maj"></p>
+      <button class="btn-barre" id="actualiser" type="button"></button>
+      <button class="btn-barre discret" id="theme" type="button"></button>
+    </div>
+  </nav>
+  <main class="contenu" id="contenu" tabindex="-1"></main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
