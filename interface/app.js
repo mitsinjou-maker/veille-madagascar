@@ -184,7 +184,8 @@ function majBarre() {
     const pastille = k && k.n ? `<span class="compteur ${k.alerte ? 'alerte' : ''}">${k.n}</span>` : '';
     return `<li><button type="button" data-vue="${v.id}" ${v.id === E.vue ? 'aria-current="page"' : ''}>${ico(v.icone)}<span class="long">${v.nom}</span><span class="court">${v.court}</span>${pastille}</button></li>`;
   }).join('');
-  $('#maj').textContent = E.maj ? `Dernière collecte ${ilYA(E.maj)}` : '';
+  // Sans serveur local, la page est la version en ligne : la collecte y est planifiée, pas déclenchée à la main.
+  $('#maj').textContent = E.maj ? `Dernière collecte ${ilYA(E.maj)}${E.api ? '' : '. Mise à jour automatique toutes les deux heures.'}` : '';
   const bouton = $('#actualiser');
   bouton.hidden = !E.api;
   bouton.disabled = E.collecte;

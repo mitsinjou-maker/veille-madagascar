@@ -7,10 +7,6 @@
   "collecte": {
     "intervalleMinimalMinutes": 15
   },
-  "telegram": {
-    "jeton": "",
-    "destinataire": ""
-  },
   "sources": [
     { "id": "ofa", "nom": "Opportunities for Africans", "type": "rss", "url": "https://www.opportunitiesforafricans.com/feed/", "zone": "afrique" },
     { "id": "opdesk", "nom": "Opportunity Desk", "type": "rss", "url": "https://opportunitydesk.org/feed/" },

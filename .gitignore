@@ -3,4 +3,9 @@ donnees/opportunites.json
 donnees/etat.json
 donnees/resume.txt
 
+# Réglages propres à une machine, dont le jeton Telegram : jamais sur GitHub
+config.local.json
+
+# Site assemblé par le flux de publication
+_site/
 node_modules/

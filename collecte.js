@@ -9,6 +9,8 @@ const crypto = require('crypto');
 const RACINE = __dirname;
 const DONNEES = path.join(RACINE, 'donnees');
 const F_CONFIG = path.join(RACINE, 'config.json');
+// Réglages propres à cette machine (jeton Telegram, par exemple) : non suivi par Git.
+const F_CONFIG_LOCAL = path.join(RACINE, 'config.local.json');
 const F_ARCHIVE = path.join(DONNEES, 'opportunites.json');
 const F_REPERAGES = path.join(DONNEES, 'reperages.json');
 const F_MANUELLES = path.join(DONNEES, 'sources-manuelles.json');
@@ -426,18 +428,21 @@ function redigerResume(items, nouveaux, etat, maintenant) {
   });
   if (!aMontrer.length) lignes.push('Rien de nouveau depuis la dernière collecte.');
 
-  const sites = sitesAVisiter(etat, maintenant);
+  // En ligne, les visites ne sont connues que du navigateur : la liste serait la même à chaque collecte.
+  const sites = fs.existsSync(F_ETAT) ? sitesAVisiter(etat, maintenant) : [];
   if (sites.length) {
     lignes.push('', `À OUVRIR À LA MAIN — ${sites.length} sites`);
     for (const s of sites.slice(0, 12)) lignes.push(`- ${s.nom} : ${s.url}`);
     if (sites.length > 12) lignes.push(`- et ${sites.length - 12} autres, dans l'onglet Veille manuelle`);
   }
-  return lignes.join('\n');
+  return { texte: lignes.join('\n'), aSignaler: rappels.length + aMontrer.length > 0 };
 }
 
-// Envoi facultatif : actif seulement si config.telegram contient un jeton et un destinataire.
+// Envoi facultatif. Le jeton vient des variables d'environnement (secrets GitHub) ou de config.local.json,
+// jamais d'un fichier suivi par Git.
 async function envoyerTelegram(config, message) {
-  const { jeton, destinataire } = config.telegram || {};
+  const jeton = process.env.TELEGRAM_JETON || (config.telegram || {}).jeton;
+  const destinataire = process.env.TELEGRAM_DESTINATAIRE || (config.telegram || {}).destinataire;
   if (!jeton || !destinataire) return null;
   for (let i = 0; i < message.length; i += 3800) {
     const rep = await fetch(`https://api.telegram.org/bot${jeton}/sendMessage`, {
@@ -453,7 +458,7 @@ async function envoyerTelegram(config, message) {
 // ---------- Collecte complète ----------
 
 async function collecter() {
-  const config = lireJson(F_CONFIG, { sources: [], profil: {} });
+  const config = { ...lireJson(F_CONFIG, { sources: [], profil: {} }), ...lireJson(F_CONFIG_LOCAL, {}) };
   const profil = config.profil || {};
   const maintenant = new Date();
   const horodatage = maintenant.toISOString();
@@ -520,9 +525,10 @@ async function collecter() {
   fs.mkdirSync(DONNEES, { recursive: true });
   fs.writeFileSync(F_ARCHIVE, JSON.stringify({ majLe: horodatage, bilan, sources: etatsSources, items }, null, 1));
   const resume = redigerResume(items, nouveaux, etat, maintenant);
-  fs.writeFileSync(F_RESUME, resume);
+  fs.writeFileSync(F_RESUME, resume.texte);
   try {
-    bilan.telegram = await envoyerTelegram(config, resume);
+    // Pas de message quand il n'y a rien de nouveau : la collecte tourne plusieurs fois par jour.
+    bilan.telegram = resume.aSignaler ? await envoyerTelegram(config, resume.texte) : null;
   } catch (e) {
     bilan.telegram = `échec de l'envoi : ${e.message}`;
   }

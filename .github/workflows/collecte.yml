@@ -1,0 +1,86 @@
+name: Collecte et mise en ligne
+
+on:
+  schedule:
+    # Toutes les deux heures, à la minute 23 (heure UTC ; Madagascar = UTC+3).
+    - cron: '23 */2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# Une seule collecte à la fois : deux exécutions simultanées écraseraient l'archive l'une de l'autre.
+concurrency:
+  group: collecte
+  cancel-in-progress: false
+
+jobs:
+  collecte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.mise-en-ligne.outputs.page_url }}
+    env:
+      TZ: Indian/Antananarivo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # L'archive vit sur la branche « donnees ». Sans elle, chaque collecte repartirait de zéro
+      # et oublierait les annonces sorties des flux.
+      - name: Reprendre l'archive de la collecte précédente
+        run: |
+          if git ls-remote --exit-code --heads origin donnees > /dev/null; then
+            git fetch --depth=1 origin donnees
+            git show FETCH_HEAD:opportunites.json > donnees/opportunites.json
+            echo "Archive reprise."
+          else
+            code=$?
+            # 2 = la branche n'existe pas encore. Toute autre erreur arrête tout, pour ne pas écraser l'archive.
+            if [ "$code" -ne 2 ]; then exit "$code"; fi
+            echo "Pas encore d'archive : première collecte."
+          fi
+
+      - name: Collecter
+        env:
+          TELEGRAM_JETON: ${{ secrets.TELEGRAM_JETON }}
+          TELEGRAM_DESTINATAIRE: ${{ secrets.TELEGRAM_DESTINATAIRE }}
+        run: node collecte.js
+
+      - name: Enregistrer l'archive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          depot="$(mktemp -d)"
+          cp donnees/opportunites.json donnees/resume.txt "$depot/"
+          cd "$depot"
+          git init -q -b donnees
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Archive du $(date '+%Y-%m-%d %H:%M')"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" donnees
+
+      - name: Assembler le site
+        run: |
+          mkdir -p _site/donnees
+          cp -r interface/. _site/
+          cp donnees/opportunites.json donnees/resume.txt donnees/sources-manuelles.json donnees/calendrier.json _site/donnees/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Mettre en ligne
+        id: mise-en-ligne
+        uses: actions/deploy-pages@v4
