@@ -332,6 +332,13 @@ Tout changement envoyé sur la branche `main` relance une collecte et republie l
 
 Une erreur de syntaxe, un test en échec ou une erreur du collecteur arrêtent l'exécution avant la publication : la page reste sur sa dernière version. Une erreur d'affichage qui n'est ni une faute de syntaxe ni un cas couvert par les tests peut encore partir en ligne. Il vaut donc mieux essayer en local avant d'envoyer.
 
+### Recevoir le résumé sur Telegram
+
+1. Créer un bot avec @BotFather sur Telegram et noter son jeton.
+2. Écrire un message au bot, puis relever l'identifiant de la conversation.
+3. Dans le dépôt : Settings, Secrets and variables, Actions. Ajouter deux secrets, `TELEGRAM_JETON` et `TELEGRAM_DESTINATAIRE`.
+
+Un message part seulement quand une collecte trouve du nouveau. Cet envoi est écrit mais n'a pas encore été essayé.
 
 ## Utiliser l'outil sur son ordinateur
 
