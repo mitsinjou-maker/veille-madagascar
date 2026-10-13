@@ -4,7 +4,7 @@ Outil de veille des appels à projets, concours, bourses et marchés ouverts aux
 
 **Site en ligne : <https://mitsinjou-maker.github.io/veille-madagascar/>**
 
-Il lit 9 sources toutes les deux heures, classe chaque annonce selon l'éligibilité de Madagascar, et tient à jour une liste de 37 sites à consulter soi-même.
+Il lit 9 sources (les agrégateurs toutes les deux heures, la presse et les marchés deux fois par jour), classe chaque annonce selon l'éligibilité de Madagascar, et tient à jour une liste de 37 sites à consulter soi-même. La dernière liste reste lisible sans connexion.
 
 ![La liste des opportunités et la fiche d'une annonce](docs/apercu-opportunites.jpg)
 
@@ -84,7 +84,7 @@ flowchart LR
 
 Toutes les deux heures, GitHub Actions exécute `collecte.js`. Le script :
 
-1. **télécharge** chaque source, avec un délai maximal de 30 secondes par source ;
+1. **interroge** chaque source, avec un délai maximal de 30 secondes. Une source qui répond « rien de neuf » n'est pas retéléchargée ;
 2. **classe** chaque annonce : type, éligibilité, porteurs visés, thèmes, date limite, montant ;
 3. **fusionne** le résultat avec l'archive des collectes précédentes ;
 4. **dédoublonne** les annonces vues sur plusieurs sources ;
@@ -141,6 +141,7 @@ Chaque annonce reçoit une note de 0 à 100, qui sert au tri.
 ### Les doublons et la conservation
 
 - Deux annonces de sources différentes sont fusionnées quand leurs titres partagent l'essentiel de leurs mots. La fiche indique alors « Aussi vu sur ».
+- Une annonce réservée à un autre pays, masquée par défaut, n'est gardée que 7 jours.
 - Une annonce datée est supprimée 45 jours après sa date limite.
 - Une annonce sans date est supprimée 75 jours après sa publication.
 - Une annonce retenue n'est jamais supprimée de l'archive locale.
@@ -153,6 +154,15 @@ Chaque annonce reçoit une note de 0 à 100, qui sert au tri.
 - **Copie de la veille.** À la première écriture de chaque jour, l'état précédent est gardé dans `opportunites.sauvegarde.json` et `etat.sauvegarde.json`. Si le fichier principal est illisible, l'outil repart de cette copie.
 - **Chute anormale refusée.** Si une collecte ferait perdre plus de la moitié des annonces de l'archive, elle n'est pas écrite et la collecte s'arrête en erreur.
 - **Données assainies à l'affichage.** La page ramène tout ce qu'elle lit à des valeurs connues ou à du texte borné avant de l'afficher.
+- **Politique de sécurité de la page.** Seuls les fichiers du site peuvent être chargés ou exécutés : un script glissé dans la page ou venu d'ailleurs est bloqué par le navigateur.
+- **Tests avant publication.** À chaque exécution, la syntaxe de chaque fichier est vérifiée et 25 tests rejouent le classement, la lecture des flux, l'écriture des fichiers et le serveur local. Un échec arrête tout avant la collecte.
+
+### Le rythme des sources
+
+- **Par défaut**, une source est interrogée à chaque collecte, soit toutes les deux heures en ligne.
+- **Rythme lent.** Les deux quotidiens et la Banque mondiale portent `"intervalleHeures": 12` dans `config.json` : ils ne sont relus que deux fois par jour. Une lecture en échec est retentée à la collecte suivante.
+- **Rien de neuf.** L'outil présente à chaque source ce qu'elle avait annoncé la fois précédente. Si rien n'a changé, elle répond d'une ligne et l'écran Sources affiche « Lue, sans changement ». Toutes les sources ne jouent pas ce jeu : certaines renvoient leur flux entier à chaque fois.
+- **Après un changement de règles.** Les annonces déjà archivées ne sont reclassées que si leur source est relue en entier. C'est automatique quand `config.json` change ; après une modification des règles dans `collecte.js`, augmenter la constante `REGLES`.
 
 ## Les sites surveillés
 
@@ -311,11 +321,13 @@ Ces sites refusent les robots, n'ont pas de flux, ou ne publient qu'un appel par
 | Élément | Où |
 | --- | --- |
 | Page publique | <https://mitsinjou-maker.github.io/veille-madagascar/> |
-| Flux de collecte | `.github/workflows/collecte.yml` |
+| Flux de collecte | `.github/workflows/collecte.yml`, en trois tâches |
 | Archive des annonces | branche `donnees` du dépôt |
 | Historique des exécutions | onglet [Actions](https://github.com/mitsinjou-maker/veille-madagascar/actions) |
 
 - **Rythme.** La collecte part toutes les deux heures, à la minute 23. GitHub peut la retarder aux heures chargées.
+- **Trois tâches aux droits séparés.** La première vérifie le code, collecte et assemble le site ; elle lit du contenu venu de sites tiers et n'a aucun droit d'écriture. La deuxième dépose l'archive sur la branche `donnees`. La troisième publie la page. Les actions GitHub utilisées sont désignées par l'empreinte d'un commit.
+- **Lecture hors connexion.** Après une première visite, le navigateur garde la page et la dernière liste. Sans réseau, ou sur une connexion qui met plus de quatre secondes à répondre, c'est cette copie qui s'affiche ; la date de la dernière collecte indique son âge.
 - **Lancer une collecte à la main.** Onglet Actions, flux « Collecte et mise en ligne », bouton « Run workflow ».
 - **Changer le rythme.** Modifier la ligne `cron` du flux. L'heure y est exprimée en temps universel ; Madagascar a trois heures d'avance.
 - **Mémoire de l'utilisateur.** Les annonces retenues, écartées, lues et les visites sont enregistrées dans le navigateur de chaque appareil. Elles ne se synchronisent pas entre téléphone et ordinateur, et disparaissent si l'on efface les données du navigateur.
@@ -332,7 +344,14 @@ Tout changement envoyé sur la branche `main` relance une collecte et republie l
 | `donnees/reperages.json`, `calendrier.json`, `sources-manuelles.json` | Affiché après la republication. |
 | Fichiers `.md` et dossier `docs/` seuls | Aucun : la documentation ne relance pas de collecte. |
 
-Une erreur dans le collecteur fait échouer l'exécution avant la publication : la page reste sur sa dernière version. Une erreur dans l'interface n'est détectée par rien et part en ligne. Il vaut donc mieux essayer en local avant d'envoyer.
+Une erreur de syntaxe, un test en échec ou une erreur du collecteur arrêtent l'exécution avant la publication : la page reste sur sa dernière version. Une erreur d'affichage qui n'est ni une faute de syntaxe ni un cas couvert par les tests peut encore partir en ligne. Il vaut donc mieux essayer en local avant d'envoyer.
+
+### Deux réglages à activer vous-même sur GitHub
+
+Ces deux protections se règlent dans l'interface de GitHub, par le propriétaire du dépôt.
+
+1. **Détection de secrets.** Settings, puis « Advanced Security » (ou « Code security ») : activer « Secret Protection » et « Push protection ». GitHub refusera alors tout envoi contenant un jeton ou un mot de passe reconnu.
+2. **Protection de la branche principale.** Settings, Rules, Rulesets, « New branch ruleset » : cibler la branche par défaut, cocher « Restrict deletions » et « Block force pushes », puis passer la règle en « Active ». La branche `donnees`, réécrite à chaque collecte, ne doit pas être ciblée.
 
 ### Recevoir le résumé sur Telegram
 
@@ -357,6 +376,12 @@ Le navigateur s'ouvre sur `http://localhost:4173`. Laisser la fenêtre de comman
 Le serveur local ne répond qu'aux adresses `localhost` et `127.0.0.1` de cet ordinateur.
 
 En local, le bouton « Actualiser » relance la collecte, au plus une fois toutes les 15 minutes pour ménager les sites. La mémoire de l'utilisateur est enregistrée dans `donnees/etat.json`.
+
+Pour lancer les tests, qui travaillent dans un dossier temporaire et sans réseau :
+
+```bash
+node --test tests/*.test.js
+```
 
 Pour collecter sans ouvrir l'interface :
 
@@ -397,6 +422,7 @@ Ajouter une ligne à `sources` dans `config.json`. Il faut l'adresse d'un flux R
 | `"zone": "afrique"` | Source destinée aux candidats africains : classement « Ensemble régional » par défaut. |
 | `"presse": true` | Journal généraliste : seuls les articles parlant d'appels, de concours ou de bourses sont gardés. |
 | `"paysDansTitre": true` | Un pays lointain dans le titre vaut restriction. |
+| `"intervalleHeures": 12` | Ne relit la source que toutes les 12 heures. |
 | `"actif": false` | Met la source en pause sans la supprimer. |
 
 ### Ajouter un site à la veille manuelle
@@ -463,7 +489,8 @@ serveur.js                  Serveur local : interface, mémoire de l'utilisateur
 fichiers.js                 Lecture et écriture sûres des fichiers de données
 config.json                 Profil et liste des sources automatiques
 Lancer la veille.bat        Lanceur Windows
-interface/                  La page : index.html, style.css, app.js
+interface/                  La page : index.html, style.css, app.js, et sw.js pour la lecture hors connexion
+tests/                      Tests automatiques du collecteur, du serveur et des fichiers
 donnees/reperages.json      Fiches saisies à la main
 donnees/sources-manuelles.json   Sites de la veille manuelle
 donnees/calendrier.json     Appels annuels
@@ -483,6 +510,10 @@ Le code n'a aucune dépendance : pas de `npm install`, pas de dossier `node_modu
 | Une source est « muette » | Aucun article nouveau depuis sept jours : vérifier que le site publie encore et que l'adresse du flux n'a pas changé. |
 | La page n'affiche pas mes dernières modifications | Attendre la fin de l'exécution dans l'onglet Actions, puis recharger la page en vidant le cache (`Ctrl` + `F5`). |
 | Les collectes planifiées se sont arrêtées | GitHub suspend les flux planifiés d'un dépôt resté 60 jours sans activité. Les réactiver dans l'onglet Actions. |
+| L'exécution échoue à l'étape « Vérifier le code » | Un fichier a une erreur de syntaxe ou un test ne passe plus. Le journal de l'étape nomme le test ; le relancer en local avec `node --test tests/*.test.js`. |
+| GitHub signale une action obsolète | Dans `collecte.yml`, remplacer l'empreinte de l'action par celle de sa nouvelle version, mettre à jour le commentaire, puis vérifier une exécution. |
+| La page affiche une liste ancienne | Hors connexion ou sur un réseau lent, le navigateur montre sa dernière copie. Recharger une fois la connexion revenue. |
+| J'ai changé les règles mais les anciennes annonces ne bougent pas | Augmenter la constante `REGLES` dans `collecte.js` : les sources sont alors relues en entier. |
 | La collecte s'arrête sur « écriture refusée » | L'archive aurait perdu plus de la moitié de ses annonces, signe d'une erreur. Si la baisse est voulue (sources retirées, par exemple), relancer une fois avec la variable `ACCEPTER_CHUTE=1`. |
 | L'archive ou l'état semble abîmé | Remplacer le fichier par sa copie `.sauvegarde.json`, qui contient l'état de la veille. En ligne, les deux fichiers sont sur la branche `donnees`. |
 | « Collecte déjà faite » en local | Le bouton Actualiser n'agit qu'une fois toutes les 15 minutes. Le délai se règle dans `config.json`. |

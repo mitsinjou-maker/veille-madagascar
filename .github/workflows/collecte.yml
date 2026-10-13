@@ -10,31 +10,36 @@ on:
     # Une retouche de la documentation seule ne relance pas de collecte.
     paths-ignore: ['**.md', 'docs/**']
 
-permissions:
-  contents: write
-  pages: write
-  id-token: write
+# Aucun droit par défaut : chaque tâche ne reçoit que ceux dont elle a besoin.
+permissions: {}
 
-# Une seule collecte à la fois : deux exécutions simultanées écraseraient l'archive l'une de l'autre.
+# Une seule exécution à la fois : deux exécutions simultanées écraseraient l'archive l'une de l'autre.
 concurrency:
   group: collecte
   cancel-in-progress: false
 
+# Les actions sont désignées par l'empreinte d'un commit, et non par une étiquette qu'on peut déplacer.
+# Pour monter de version : remplacer l'empreinte et le commentaire, puis vérifier une exécution.
+
 jobs:
+  # Cette tâche lit du contenu venu de sites tiers : elle ne peut ni écrire dans le dépôt ni publier.
   collecte:
+    name: Vérifier et collecter
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment:
-      name: github-pages
-      url: ${{ steps.mise-en-ligne.outputs.page_url }}
+    permissions:
+      contents: read
     env:
       TZ: Indian/Antananarivo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      # Une erreur de syntaxe ou un test en échec arrête tout ici : rien n'est collecté ni publié.
+      - name: Vérifier le code
+        run: |
+          node --version
+          for fichier in collecte.js serveur.js fichiers.js interface/app.js interface/sw.js; do node --check "$fichier"; done
+          node --test tests/*.test.js
 
       # L'archive vit sur la branche « donnees ». Sans elle, chaque collecte repartirait de zéro
       # et oublierait les annonces sorties des flux.
@@ -61,33 +66,69 @@ jobs:
           TELEGRAM_DESTINATAIRE: ${{ secrets.TELEGRAM_DESTINATAIRE }}
         run: node collecte.js
 
-      - name: Enregistrer l'archive
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          depot="$(mktemp -d)"
-          cp donnees/opportunites.json donnees/resume.txt "$depot/"
-          if [ -f donnees/opportunites.sauvegarde.json ]; then cp donnees/opportunites.sauvegarde.json "$depot/"; fi
-          cd "$depot"
-          git init -q -b donnees
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "Archive du $(date '+%Y-%m-%d %H:%M')"
-          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" donnees
-
       - name: Assembler le site
         run: |
           mkdir -p _site/donnees
           cp -r interface/. _site/
           cp donnees/opportunites.json donnees/resume.txt donnees/sources-manuelles.json donnees/calendrier.json _site/donnees/
 
-      - uses: actions/configure-pages@v5
+      - name: Transmettre l'archive à la tâche d'enregistrement
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive
+          path: |
+            donnees/opportunites.json
+            donnees/opportunites.sauvegarde.json
+            donnees/resume.txt
+          if-no-files-found: error
+          retention-days: 1
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Transmettre le site à la tâche de publication
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site
 
-      - name: Mettre en ligne
+  # Seule tâche qui écrit dans le dépôt. Elle n'exécute aucun code du projet :
+  # elle dépose les fichiers reçus sur la branche « donnees ».
+  archive:
+    name: Enregistrer l'archive
+    needs: collecte
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: archive
+          path: archive
+
+      - name: Déposer sur la branche donnees
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cd archive
+          test -s opportunites.json
+          git init -q -b donnees
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Archive du $(TZ=Indian/Antananarivo date '+%Y-%m-%d %H:%M')"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" donnees
+
+  # Publie le site assemblé par la première tâche, une fois l'archive enregistrée.
+  publication:
+    name: Mettre en ligne
+    needs: [collecte, archive]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.mise-en-ligne.outputs.page_url }}
+    steps:
+      - name: Publier
         id: mise-en-ligne
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

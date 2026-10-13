@@ -43,6 +43,8 @@ const MOIS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juill
 const INITIALES = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const JOUR = 86400000;
 const CLE_ETAT = 'veille-madagascar-etat';
+// Sur l'ordinateur, la page parle à son serveur local. Partout ailleurs, c'est la version en ligne, en lecture seule.
+const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
 // Nombre de lignes dessinées d'un coup : la suite arrive au défilement.
 const PAS = 100;
 const etatVide = () => ({ retenues: {}, ecartees: {}, avis: {}, vues: {}, visites: {} });
@@ -138,6 +140,7 @@ const assainirEvenement = e => ({
 const assainirSource = s => ({
   nom: texteSur(s.nom, 80),
   ok: s.ok === true,
+  inchange: s.inchange === true,
   erreur: texteSur(s.erreur, 120),
   lus: entier(s.lus, 0, 1e6, 0),
   gardes: entier(s.gardes, 0, 1e6, 0),
@@ -147,7 +150,8 @@ const assainirSource = s => ({
 
 async function lire(url, defaut, texte) {
   try {
-    const r = await fetch(url, { cache: 'no-store' });
+    // « no-cache » : le navigateur demande au site si le fichier a changé, et ne le retélécharge que dans ce cas.
+    const r = await fetch(url, { cache: 'no-cache' });
     if (!r.ok) throw new Error(r.status);
     return texte ? await r.text() : await r.json();
   } catch { return defaut; }
@@ -179,6 +183,7 @@ async function chargerEtat() {
   try { copie = JSON.parse(localStorage.getItem(CLE_ETAT) || 'null'); } catch { /* stockage indisponible */ }
   let etat = null;
   try {
+    if (!LOCAL) throw new Error('version en ligne : pas de serveur à interroger');
     const r = await fetch('api/etat', { cache: 'no-store' });
     if (!r.ok) throw new Error(r.status);
     etat = await r.json();
@@ -283,7 +288,8 @@ function majBarre() {
     return `<li><button type="button" data-vue="${v.id}" ${v.id === E.vue ? 'aria-current="page"' : ''}>${ico(v.icone)}<span class="long">${v.nom}</span><span class="court">${v.court}</span>${pastille}</button></li>`;
   }).join('');
   // Sans serveur local, la page est la version en ligne : la collecte y est planifiée, pas déclenchée à la main.
-  $('#maj').textContent = E.maj ? `Dernière collecte ${ilYA(E.maj)}${E.api ? '' : '. Mise à jour automatique toutes les deux heures.'}` : '';
+  const suite = !navigator.onLine ? '. Hors connexion : dernière liste gardée par ce navigateur.' : E.api ? '' : '. Mise à jour automatique toutes les deux heures.';
+  $('#maj').textContent = E.maj ? `Dernière collecte ${ilYA(E.maj)}${suite}` : '';
   const bouton = $('#actualiser');
   bouton.hidden = !E.api;
   bouton.disabled = E.collecte;
@@ -405,7 +411,7 @@ function majChiffres() {
   const lues = E.sources.filter(s => s.ok).length;
   $('#sous-titre').textContent = E.vue === 'echeances'
     ? 'Classées par date limite. Les dates sont lues dans les annonces : à confirmer avant de déposer un dossier.'
-    : `${E.visibles.length} affichées · collecte ${ilYA(E.maj)} sur ${lues} sources`;
+    : `${E.visibles.length} affichées · collecte ${ilYA(E.maj)} sur ${lues} sources${navigator.onLine ? '' : ' · hors connexion'}`;
 }
 
 function majFiche() {
@@ -574,7 +580,7 @@ function vueManuelle() {
 function vueSources() {
   const lignes = E.sources.map(s => {
     const muet = s.ok && s.dernierArticle && (Date.now() - Date.parse(s.dernierArticle)) / JOUR > 7;
-    const etat = !s.ok ? ['erreur', `En erreur : ${s.erreur}`] : muet ? ['muet', 'Muette depuis plus de 7 jours'] : ['', 'Lue'];
+    const etat = !s.ok ? ['erreur', `En erreur : ${s.erreur}`] : muet ? ['muet', 'Muette depuis plus de 7 jours'] : ['', s.inchange ? 'Lue, sans changement' : 'Lue'];
     return `<tr><td><b>${esc(s.nom)}</b></td><td><span class="etat-src ${etat[0]}">${esc(etat[1])}</span></td>
       <td class="n">${s.lus}</td><td class="n">${s.gardes}</td><td class="n">${s.dernierArticle ? ilYA(s.dernierArticle) : '—'}</td><td class="n">${s.dernierSucces ? ilYA(s.dernierSucces) : 'jamais'}</td></tr>`;
   }).join('');
@@ -751,9 +757,15 @@ document.addEventListener('keydown', ev => {
   else if (ev.key === 'Enter') { const o = E.items.find(x => x.id === E.sel); if (o) window.open(lienSur(o.lien), '_blank', 'noopener'); }
 });
 
+// Retour du réseau : on recharge les données. Perte du réseau : on le signale.
+window.addEventListener('online', async () => { await chargerDonnees(); rendu(); });
+window.addEventListener('offline', () => { majBarre(); majChiffres(); });
+
 // ---------- Démarrage ----------
 (async () => {
   try { const t = localStorage.getItem('veille-theme'); if (t) document.documentElement.dataset.theme = t; } catch { /* stockage indisponible */ }
+  // La lecture hors connexion ne concerne que la version en ligne : en local, les données sont déjà sur l'ordinateur.
+  if (!LOCAL && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   await chargerEtat();
   const pret = await chargerDonnees();
   rendu();

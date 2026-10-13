@@ -8,10 +8,12 @@ const crypto = require('crypto');
 const { lireJson, lireAvecSecours, ecrireSur, cheminSecours } = require('./fichiers');
 
 const RACINE = __dirname;
-const DONNEES = path.join(RACINE, 'donnees');
-const F_CONFIG = path.join(RACINE, 'config.json');
+// Les deux variables d'environnement servent aux tests, qui travaillent dans un dossier temporaire.
+const DONNEES = process.env.VEILLE_DONNEES || path.join(RACINE, 'donnees');
+const F_CONFIG = process.env.VEILLE_CONFIG || path.join(RACINE, 'config.json');
 // Réglages propres à cette machine (jeton Telegram, par exemple) : non suivi par Git.
-const F_CONFIG_LOCAL = path.join(RACINE, 'config.local.json');
+// Ignorés pendant les tests, pour qu'un jeton réel ne serve jamais à un essai.
+const F_CONFIG_LOCAL = process.env.VEILLE_CONFIG ? '' : path.join(RACINE, 'config.local.json');
 const F_ARCHIVE = path.join(DONNEES, 'opportunites.json');
 const F_REPERAGES = path.join(DONNEES, 'reperages.json');
 const F_MANUELLES = path.join(DONNEES, 'sources-manuelles.json');
@@ -26,6 +28,12 @@ const MAX_REPONSE = 5 * 1024 * 1024;
 const MAX_ARTICLES = 200;
 const MAX_BLOC = 100000;
 const MAX_ARTICLE = 20000;
+
+// À augmenter quand les règles de classement changent : les sources sont alors relues en entier
+// au lieu de répondre « rien de neuf », et leurs annonces reclassées.
+const REGLES = 2;
+// Marge laissée aux retards de la planification quand une source a son propre rythme.
+const TOLERANCE = 20 * 60000;
 
 const norm = s => String(s || '').toLowerCase().normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').replace(/[’‘`]/g, "'");
@@ -115,14 +123,17 @@ function contenus(bloc, nom, max = 80) {
 }
 const contenu = (bloc, nom) => contenus(bloc, nom, 1)[0] || '';
 
-async function telecharger(url) {
+// Télécharge une source. Si elle a déjà été lue, on lui présente ce qu'elle avait annoncé la fois précédente :
+// elle répond alors 304, sans renvoyer son contenu, quand rien n'a changé.
+async function telecharger(url, deja = {}) {
   const arret = new AbortController();
   const minuterie = setTimeout(() => arret.abort(), 30000);
+  const entetes = { 'User-Agent': AGENT, Accept: 'application/rss+xml, application/xml, application/json, text/xml, */*' };
+  if (deja.etag) entetes['If-None-Match'] = deja.etag;
+  if (deja.lastModified) entetes['If-Modified-Since'] = deja.lastModified;
   try {
-    const rep = await fetch(url, {
-      signal: arret.signal,
-      headers: { 'User-Agent': AGENT, Accept: 'application/rss+xml, application/xml, application/json, text/xml, */*' },
-    });
+    const rep = await fetch(url, { signal: arret.signal, headers: entetes });
+    if (rep.status === 304) return { inchange: true };
     if (!rep.ok) throw new Error(rep.status === 429 ? 'trop de requêtes (429)' : `réponse ${rep.status}`);
     if (Number(rep.headers.get('content-length')) > MAX_REPONSE || !rep.body) throw new Error('réponse trop volumineuse ou vide');
     const morceaux = [];
@@ -132,7 +143,11 @@ async function telecharger(url) {
       if (taille > MAX_REPONSE) { arret.abort(); throw new Error('réponse trop volumineuse'); }
       morceaux.push(morceau);
     }
-    return Buffer.concat(morceaux).toString('utf8');
+    return {
+      corps: Buffer.concat(morceaux).toString('utf8'),
+      etag: rep.headers.get('etag') || null,
+      lastModified: rep.headers.get('last-modified') || null,
+    };
   } finally {
     clearTimeout(minuterie);
   }
@@ -141,9 +156,9 @@ async function telecharger(url) {
 // Mention ajoutée par les sites en fin d'article : sans intérêt, et elle fausse le classement.
 const RE_SIGNATURE = /(The post|Cet article|L’article|L'article) .{0,400}?(appeared first on|first appeared on|est apparu en premier sur).*$/i;
 
+// Chaque lecteur reçoit le contenu téléchargé et rend les articles bruts.
 const LECTEURS = {
-  async rss(source) {
-    const xml = await telecharger(source.url);
+  rss(xml) {
     let articles = decouper(xml, 'item');
     if (!articles.length) articles = decouper(xml, 'entry');
     if (!articles.length && !/<(rss|feed|rdf)/i.test(xml.slice(0, 5000))) throw new Error('flux illisible');
@@ -158,8 +173,8 @@ const LECTEURS = {
   },
 
   // Avis de marchés des projets financés à Madagascar.
-  async 'banque-mondiale'(source) {
-    const data = JSON.parse(await telecharger(source.url));
+  'banque-mondiale'(json) {
+    const data = JSON.parse(json);
     const TYPES = {
       'Invitation for Bids': 'Appel d’offres',
       'Request for Expression of Interest': 'Manifestation d’intérêt',
@@ -413,7 +428,7 @@ function classer(b, source, profil, maintenant) {
     echeance: b.echeance !== undefined ? b.echeance : trouverEcheance(`${b.titre}. ${b.texte}`),
     montant: trouverMontant(`${b.titre}. ${b.texte}`),
     langue: trouverLangue(`${b.titre} ${b.texte}`),
-    resume: resume.length > 520 ? `${resume.slice(0, 517).trimEnd()}…` : resume,
+    resume: resume.length > 320 ? `${resume.slice(0, 317).trimEnd()}…` : resume,
     aussiSur: [],
   };
   if (source.presse) o.presse = true;
@@ -537,24 +552,43 @@ async function collecter() {
 
   const sources = (config.sources || []).filter(s => s.actif !== false);
   const lectures = await Promise.all(sources.map(async source => {
+    const precedent = etatsPrecedents.get(source.id) || {};
+    // Empreinte de ce qui décide du classement : si elle change, la source est relue en entier.
+    const regles = crypto.createHash('sha1').update(JSON.stringify([REGLES, profil, source])).digest('hex').slice(0, 10);
+    const base = { source, precedent, regles };
+
+    // Source à rythme lent (presse, marchés) : on ne la relit pas avant son délai.
+    const delai = (source.intervalleHeures || 0) * 3600000;
+    const depuis = precedent.dernierSucces ? maintenant - Date.parse(precedent.dernierSucces) : Infinity;
+    if (delai && depuis < delai - TOLERANCE) return { ...base, reportee: true };
+
     try {
-      return { source, bruts: await LECTEURS[source.type](source) };
+      const rep = await telecharger(source.url, precedent.regles === regles ? precedent : {});
+      if (rep.inchange) return { ...base, inchange: true };
+      return { ...base, bruts: LECTEURS[source.type](rep.corps, source), etag: rep.etag, lastModified: rep.lastModified };
     } catch (e) {
-      return { source, erreur: e.name === 'AbortError' ? 'délai dépassé' : (e.cause && e.cause.code) || e.message };
+      return { ...base, erreur: e.name === 'AbortError' ? 'délai dépassé' : (e.cause && e.cause.code) || e.message };
     }
   }));
 
   const recoltes = [];
-  const etatsSources = lectures.map(({ source, bruts, erreur }) => {
-    const precedent = etatsPrecedents.get(source.id) || {};
-    const classes = (bruts || []).map(b => classer(b, source, profil, maintenant)).filter(Boolean);
+  const etatsSources = lectures.map(l => {
+    const { source, precedent } = l;
+    const identite = { id: source.id, nom: source.nom, url: source.url };
+    if (l.reportee) return { ...precedent, ...identite };
+    if (l.inchange) return { ...precedent, ...identite, ok: true, erreur: null, inchange: true, collecteLe: horodatage, dernierSucces: horodatage };
+    const classes = (l.bruts || []).map(b => classer(b, source, profil, maintenant)).filter(Boolean);
     recoltes.push(...classes);
-    const dates = (bruts || []).map(b => Date.parse(b.date)).filter(n => !Number.isNaN(n));
+    const dates = (l.bruts || []).map(b => Date.parse(b.date)).filter(n => !Number.isNaN(n));
     return {
-      id: source.id, nom: source.nom, url: source.url, ok: !erreur, erreur: erreur || null,
-      lus: bruts ? bruts.length : 0, gardes: classes.length,
+      ...identite, ok: !l.erreur, erreur: l.erreur || null, inchange: false,
+      lus: l.bruts ? l.bruts.length : 0, gardes: classes.length,
       dernierArticle: dates.length ? new Date(Math.max(...dates)).toISOString() : precedent.dernierArticle || null,
-      collecteLe: horodatage, dernierSucces: erreur ? precedent.dernierSucces || null : horodatage,
+      collecteLe: horodatage, dernierSucces: l.erreur ? precedent.dernierSucces || null : horodatage,
+      // En cas d'erreur, on garde ce que la source avait annoncé la dernière fois qu'elle a répondu.
+      etag: l.erreur ? precedent.etag || null : l.etag,
+      lastModified: l.erreur ? precedent.lastModified || null : l.lastModified,
+      regles: l.erreur ? precedent.regles || null : l.regles,
     };
   });
 
@@ -577,6 +611,8 @@ async function collecter() {
   const vivants = [...connus.values()].filter(o => {
     if (retenues[o.id]) return true;
     if (o.source === 'reperage' && !recoltes.includes(o)) return false;
+    // Les annonces réservées à d'autres pays sont masquées par défaut : une semaine suffit pour pouvoir les corriger.
+    if (o.eligibilite === 'autre') return (maintenant - new Date(o.premiereVue)) / JOUR <= 7;
     if (o.echeance) return (new Date(aujourdhui) - new Date(o.echeance)) / JOUR <= 45;
     return (maintenant - new Date(o.publie || o.premiereVue)) / JOUR <= 75;
   });
@@ -587,6 +623,8 @@ async function collecter() {
     total: items.length,
     nouveaux: nouveaux.length,
     sourcesLues: etatsSources.filter(s => s.ok).length,
+    sansChangement: lectures.filter(l => l.inchange).length,
+    reportees: lectures.filter(l => l.reportee).length,
     sourcesEnErreur: etatsSources.filter(s => !s.ok).map(s => `${s.nom} : ${s.erreur}`),
   };
 
@@ -600,7 +638,7 @@ async function collecter() {
   // Première écriture de la journée : l'archive de la veille devient la copie de secours.
   // On réécrit l'archive telle qu'elle a été lue, et non le fichier, qui peut être celui qu'on vient de réparer.
   if (archive.majLe && archive.majLe.slice(0, 10) !== horodatage.slice(0, 10)) ecrireSur(cheminSecours(F_ARCHIVE), JSON.stringify(archive));
-  ecrireSur(F_ARCHIVE, JSON.stringify({ majLe: horodatage, bilan, sources: etatsSources, items }, null, 1));
+  ecrireSur(F_ARCHIVE, JSON.stringify({ majLe: horodatage, bilan, sources: etatsSources, items }));
   const resume = redigerResume(items, nouveaux, etat, maintenant);
   ecrireSur(F_RESUME, resume.texte);
   try {
@@ -612,11 +650,14 @@ async function collecter() {
   return bilan;
 }
 
-module.exports = { collecter, trouverEcheance, trouverEligibilite, trouverType };
+module.exports = {
+  collecter, trouverEcheance, trouverEligibilite, trouverType, trouverMontant,
+  texte, decouper, contenus, classer, dedoublonner, noter, LECTEURS, REGLES,
+};
 
 if (require.main === module) {
   collecter().then(bilan => {
-    console.log(`${bilan.total} opportunités dans l'archive, dont ${bilan.nouveaux} nouvelles. ${bilan.sourcesLues} sources lues.`);
+    console.log(`${bilan.total} opportunités dans l'archive, dont ${bilan.nouveaux} nouvelles. ${bilan.sourcesLues} sources lues, dont ${bilan.sansChangement} sans changement et ${bilan.reportees} reportées.`);
     for (const e of bilan.sourcesEnErreur) console.log(`Source en erreur — ${e}`);
     if (bilan.telegram) console.log(`Telegram : ${bilan.telegram}`);
   }).catch(e => { console.error(e); process.exit(1); });

@@ -13,7 +13,8 @@ const optionPort = process.argv.find(a => a.startsWith('--port='));
 const PORT = Number(optionPort ? optionPort.slice(7) : process.env.PORT) || 4173;
 const RACINE = __dirname;
 const INTERFACE = path.join(RACINE, 'interface');
-const DONNEES = path.join(RACINE, 'donnees');
+// Même convention que le collecteur : la variable d'environnement sert aux tests.
+const DONNEES = process.env.VEILLE_DONNEES || path.join(RACINE, 'donnees');
 const F_ETAT = path.join(DONNEES, 'etat.json');
 const F_ARCHIVE = path.join(DONNEES, 'opportunites.json');
 const F_CONFIG = path.join(RACINE, 'config.json');

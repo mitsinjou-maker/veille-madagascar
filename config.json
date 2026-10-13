@@ -14,8 +14,8 @@
     { "id": "tvg", "nom": "Terra Viva Grants", "type": "rss", "url": "https://www.terravivagrants.org/feed/", "typeDefaut": "appel" },
     { "id": "ffn", "nom": "fundsforNGOs", "type": "rss", "url": "https://www2.fundsforngos.org/feed/", "typeDefaut": "appel", "paysDansTitre": true },
     { "id": "lesopp", "nom": "Les Opportunités", "type": "rss", "url": "https://www.lesopportunites.com/feed/", "zone": "pays-url" },
-    { "id": "newsmada", "nom": "Newsmada", "type": "rss", "url": "https://newsmada.com/feed/", "presse": true },
-    { "id": "midi", "nom": "Midi Madagasikara", "type": "rss", "url": "https://midi-madagasikara.mg/feed/", "presse": true },
-    { "id": "bm", "nom": "Banque mondiale, marchés", "type": "banque-mondiale", "typeForce": "marche", "url": "https://search.worldbank.org/api/v2/procnotices?format=json&project_ctry_name_exact=Madagascar&rows=40&srt=submission_date&order=desc" }
+    { "id": "newsmada", "nom": "Newsmada", "type": "rss", "url": "https://newsmada.com/feed/", "presse": true, "intervalleHeures": 12 },
+    { "id": "midi", "nom": "Midi Madagasikara", "type": "rss", "url": "https://midi-madagasikara.mg/feed/", "presse": true, "intervalleHeures": 12 },
+    { "id": "bm", "nom": "Banque mondiale, marchés", "type": "banque-mondiale", "typeForce": "marche", "url": "https://search.worldbank.org/api/v2/procnotices?format=json&project_ctry_name_exact=Madagascar&rows=40&srt=submission_date&order=desc", "intervalleHeures": 12 }
   ]
 }
