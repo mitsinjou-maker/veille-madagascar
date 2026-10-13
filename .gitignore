@@ -2,6 +2,8 @@
 donnees/opportunites.json
 donnees/etat.json
 donnees/resume.txt
+donnees/*.sauvegarde.json
+donnees/*.tmp
 
 # Réglages propres à une machine, dont le jeton Telegram : jamais sur GitHub
 config.local.json

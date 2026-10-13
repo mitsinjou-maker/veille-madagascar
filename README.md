@@ -24,7 +24,7 @@ Il lit 9 sources toutes les deux heures, classe chaque annonce selon l'éligibil
 ## Prise en main en dix minutes
 
 1. **Ouvrir le site.** Sur téléphone ou ordinateur : <https://mitsinjou-maker.github.io/veille-madagascar/>. Rien à installer, aucun compte.
-2. **Lire la liste.** Chaque ligne est une opportunité. Les plus pertinentes sont en haut.
+2. **Lire la liste.** Chaque ligne est une opportunité. Les plus pertinentes sont en haut. La liste montre 100 annonces à la fois ; la suite arrive en défilant.
    - La tuile à gauche donne la date limite. Elle est rouge à trois jours ou moins, orange à quatorze jours ou moins. Un tiret signifie que la date n'a pas été trouvée, le signe ∞ que les candidatures sont acceptées en continu.
    - Le point bleu marque une annonce pas encore ouverte.
    - L'étiquette de couleur indique si Madagascar est éligible (voir [le tableau des étiquettes](#léligibilité)).
@@ -144,6 +144,15 @@ Chaque annonce reçoit une note de 0 à 100, qui sert au tri.
 - Une annonce datée est supprimée 45 jours après sa date limite.
 - Une annonce sans date est supprimée 75 jours après sa publication.
 - Une annonce retenue n'est jamais supprimée de l'archive locale.
+- L'archive garde au plus 1 200 annonces, les mieux notées d'abord.
+
+### Les garde-fous
+
+- **Sources bornées.** Chaque réponse est limitée à 5 Mo, chaque flux à 200 articles et chaque article à 20 000 caractères. Un flux défaillant ou hostile ne bloque pas les autres.
+- **Écriture en deux temps.** L'archive et l'état sont écrits dans un fichier temporaire, puis renommés : une coupure de courant pendant l'écriture laisse l'ancien fichier intact.
+- **Copie de la veille.** À la première écriture de chaque jour, l'état précédent est gardé dans `opportunites.sauvegarde.json` et `etat.sauvegarde.json`. Si le fichier principal est illisible, l'outil repart de cette copie.
+- **Chute anormale refusée.** Si une collecte ferait perdre plus de la moitié des annonces de l'archive, elle n'est pas écrite et la collecte s'arrête en erreur.
+- **Données assainies à l'affichage.** La page ramène tout ce qu'elle lit à des valeurs connues ou à du texte borné avant de l'afficher.
 
 ## Les sites surveillés
 
@@ -343,7 +352,9 @@ Sous Windows, double-cliquer sur `Lancer la veille.bat`. Sinon :
 node serveur.js --ouvrir
 ```
 
-Le navigateur s'ouvre sur `http://localhost:4173`. Laisser la fenêtre de commande ouverte ; la fermer arrête l'outil.
+Le navigateur s'ouvre sur `http://localhost:4173`. Laisser la fenêtre de commande ouverte ; la fermer arrête l'outil. Pour un autre port, ajouter `--port=4180`.
+
+Le serveur local ne répond qu'aux adresses `localhost` et `127.0.0.1` de cet ordinateur.
 
 En local, le bouton « Actualiser » relance la collecte, au plus une fois toutes les 15 minutes pour ménager les sites. La mémoire de l'utilisateur est enregistrée dans `donnees/etat.json`.
 
@@ -449,6 +460,7 @@ Dans `donnees/calendrier.json`, `debut` et `fin` sont des numéros de mois :
 ```
 collecte.js                 Lit les sources, classe, dédoublonne, écrit l'archive et le résumé
 serveur.js                  Serveur local : interface, mémoire de l'utilisateur, bouton Actualiser
+fichiers.js                 Lecture et écriture sûres des fichiers de données
 config.json                 Profil et liste des sources automatiques
 Lancer la veille.bat        Lanceur Windows
 interface/                  La page : index.html, style.css, app.js
@@ -459,7 +471,7 @@ docs/                       Captures d'écran de ce guide
 .github/workflows/collecte.yml   Collecte planifiée et publication
 ```
 
-Trois fichiers sont produits par l'outil et ne sont pas suivis sur la branche `main` : `donnees/opportunites.json` (l'archive), `donnees/etat.json` (la mémoire de l'utilisateur en local) et `donnees/resume.txt` (le résumé du jour). `config.local.json`, s'il existe, contient les réglages propres à un ordinateur et n'est jamais envoyé sur GitHub.
+Trois fichiers sont produits par l'outil et ne sont pas suivis sur la branche `main` : `donnees/opportunites.json` (l'archive), `donnees/etat.json` (la mémoire de l'utilisateur en local) et `donnees/resume.txt` (le résumé du jour). Les deux premiers ont chacun leur copie de la veille, en `.sauvegarde.json`. `config.local.json`, s'il existe, contient les réglages propres à un ordinateur et n'est jamais envoyé sur GitHub.
 
 Le code n'a aucune dépendance : pas de `npm install`, pas de dossier `node_modules`.
 
@@ -471,6 +483,8 @@ Le code n'a aucune dépendance : pas de `npm install`, pas de dossier `node_modu
 | Une source est « muette » | Aucun article nouveau depuis sept jours : vérifier que le site publie encore et que l'adresse du flux n'a pas changé. |
 | La page n'affiche pas mes dernières modifications | Attendre la fin de l'exécution dans l'onglet Actions, puis recharger la page en vidant le cache (`Ctrl` + `F5`). |
 | Les collectes planifiées se sont arrêtées | GitHub suspend les flux planifiés d'un dépôt resté 60 jours sans activité. Les réactiver dans l'onglet Actions. |
+| La collecte s'arrête sur « écriture refusée » | L'archive aurait perdu plus de la moitié de ses annonces, signe d'une erreur. Si la baisse est voulue (sources retirées, par exemple), relancer une fois avec la variable `ACCEPTER_CHUTE=1`. |
+| L'archive ou l'état semble abîmé | Remplacer le fichier par sa copie `.sauvegarde.json`, qui contient l'état de la veille. En ligne, les deux fichiers sont sur la branche `donnees`. |
 | « Collecte déjà faite » en local | Le bouton Actualiser n'agit qu'une fois toutes les 15 minutes. Le délai se règle dans `config.json`. |
 | Une bonne annonce est étiquetée « Autre zone » | Répondre Oui à la question d'éligibilité dans sa fiche, ou cocher « Autre zone ciblée » dans le filtre Éligibilité pour la retrouver. |
 | Mes annonces retenues ont disparu sur un autre appareil | En ligne, la mémoire reste dans le navigateur de chaque appareil. |

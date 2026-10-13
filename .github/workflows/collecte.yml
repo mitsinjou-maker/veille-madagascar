@@ -43,6 +43,10 @@ jobs:
           if git ls-remote --exit-code --heads origin donnees > /dev/null; then
             git fetch --depth=1 origin donnees
             git show FETCH_HEAD:opportunites.json > donnees/opportunites.json
+            # La copie de secours (archive de la veille) suit le même chemin quand elle existe.
+            if git cat-file -e FETCH_HEAD:opportunites.sauvegarde.json 2> /dev/null; then
+              git show FETCH_HEAD:opportunites.sauvegarde.json > donnees/opportunites.sauvegarde.json
+            fi
             echo "Archive reprise."
           else
             code=$?
@@ -63,6 +67,7 @@ jobs:
         run: |
           depot="$(mktemp -d)"
           cp donnees/opportunites.json donnees/resume.txt "$depot/"
+          if [ -f donnees/opportunites.sauvegarde.json ]; then cp donnees/opportunites.sauvegarde.json "$depot/"; fi
           cd "$depot"
           git init -q -b donnees
           git config user.name "github-actions[bot]"

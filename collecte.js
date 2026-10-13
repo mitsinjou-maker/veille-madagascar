@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { lireJson, lireAvecSecours, ecrireSur, cheminSecours } = require('./fichiers');
 
 const RACINE = __dirname;
 const DONNEES = path.join(RACINE, 'donnees');
@@ -20,11 +21,14 @@ const F_RESUME = path.join(DONNEES, 'resume.txt');
 const AGENT = 'VeilleMadagascar/0.1 (veille personnelle, collecte moderee)';
 const JOUR = 86400000;
 
-const lireJson = (fichier, defaut) => {
-  try { return JSON.parse(fs.readFileSync(fichier, 'utf8')); } catch { return defaut; }
-};
+// Plafonds : une source défaillante ou hostile ne doit ni saturer la mémoire ni bloquer la collecte.
+const MAX_REPONSE = 5 * 1024 * 1024;
+const MAX_ARTICLES = 200;
+const MAX_BLOC = 100000;
+const MAX_ARTICLE = 20000;
+
 const norm = s => String(s || '').toLowerCase().normalize('NFD')
-  .replace(/[̀-ͯ]/g, '').replace(/[’‘`]/g, "'");
+  .replace(/[\u0300-\u036f]/g, '').replace(/[’‘`]/g, "'");
 const isoJour = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // ---------- Lecture des flux ----------
@@ -40,21 +44,76 @@ const decoder = s => s
   .replace(/&#x([0-9a-f]+);/gi, (_, h) => point(parseInt(h, 16)))
   .replace(/&([a-z]+);/gi, (m, n) => ENTITES[n.toLowerCase()] ?? m);
 
-function texte(html) {
-  if (!html) return '';
-  let t = decoder(html.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'));
-  t = t.replace(/<(script|style|ins|figure)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<\/(p|div|li|h\d|tr|td|th)>|<br\s*\/?>/gi, '. ')
-    .replace(/<[^>]+>/g, ' ');
-  return decoder(t).replace(/\s+/g, ' ').replace(/\s+([.,;:])/g, '$1').replace(/([.!?:;])\.(?=\s|$)/g, '$1').replace(/\.{2,}/g, '.').trim();
+// Le découpage ci-dessous avance par recherche directe, sans expression régulière à retour arrière :
+// son temps reste proportionnel à la taille du texte, même si des balises ne sont jamais fermées.
+
+// Retire les blocs <script>, <style>, <ins> et <figure> avec leur contenu.
+function retirerBlocs(html) {
+  const bas = html.toLowerCase();
+  const debuts = /<(script|style|ins|figure)\b/g;
+  const jamaisFerme = new Set();
+  let sortie = '', pos = 0, m;
+  while ((m = debuts.exec(bas))) {
+    if (jamaisFerme.has(m[1])) continue;
+    const fin = bas.indexOf(`</${m[1]}`, debuts.lastIndex);
+    if (fin === -1) { jamaisFerme.add(m[1]); continue; }
+    const chevron = bas.indexOf('>', fin);
+    sortie += `${html.slice(pos, m.index)} `;
+    pos = chevron === -1 ? html.length : chevron + 1;
+    debuts.lastIndex = pos;
+  }
+  return sortie + html.slice(pos);
 }
 
-const balise = (bloc, nom) => {
-  const m = bloc.match(new RegExp(`<${nom}(?:\\s[^>]*)?>([\\s\\S]*?)</${nom}>`, 'i'));
-  return m ? m[1] : '';
-};
-const balises = (bloc, nom) =>
-  [...bloc.matchAll(new RegExp(`<${nom}(?:\\s[^>]*)?>([\\s\\S]*?)</${nom}>`, 'gi'))].map(m => m[1]);
+function texte(html) {
+  if (!html) return '';
+  let t = decoder(html.replace(/<!\[CDATA\[|\]\]>/g, '').slice(0, MAX_ARTICLE));
+  t = retirerBlocs(t)
+    .replace(/<\/(?:p|div|li|h\d|tr|td|th)>|<br\s*\/?>/gi, '. ')
+    .replace(/<[^<>]*>/g, ' ');
+  return decoder(t).replace(/\s+/g, ' ').replace(/ ([.,;:])/g, '$1').replace(/([.!?:;])\.(?=\s|$)/g, '$1').replace(/\.{2,}/g, '.').trim();
+}
+
+const ESPACES = '> \n\t\r/';
+
+// Blocs <nom>…</nom> d'un flux : les articles.
+function decouper(xml, nom) {
+  const bas = xml.toLowerCase();
+  const debut = `<${nom}`, fin = `</${nom}>`, blocs = [];
+  let pos = 0;
+  while (blocs.length < MAX_ARTICLES) {
+    const d = bas.indexOf(debut, pos);
+    if (d === -1) break;
+    if (!ESPACES.includes(bas[d + debut.length])) { pos = d + debut.length; continue; }
+    const f = bas.indexOf(fin, d);
+    if (f === -1) break;
+    const brut = xml.slice(d, Math.min(f + fin.length, d + MAX_BLOC));
+    blocs.push({ brut, bas: brut.toLowerCase() });
+    pos = f + fin.length;
+  }
+  return blocs;
+}
+
+// Contenus des balises <nom> d'un article.
+function contenus(bloc, nom, max = 80) {
+  // La recherche se fait dans la copie en minuscules : « pubDate » y est écrit « pubdate ».
+  const debut = `<${nom.toLowerCase()}`, fin = `</${nom.toLowerCase()}>`, trouves = [];
+  let pos = 0;
+  while (trouves.length < max) {
+    const d = bloc.bas.indexOf(debut, pos);
+    if (d === -1) break;
+    if (!ESPACES.includes(bloc.bas[d + debut.length])) { pos = d + debut.length; continue; }
+    const ouvre = bloc.bas.indexOf('>', d);
+    if (ouvre === -1) break;
+    if (bloc.bas[ouvre - 1] === '/') { pos = ouvre + 1; continue; }
+    const f = bloc.bas.indexOf(fin, ouvre);
+    if (f === -1) break;
+    trouves.push(bloc.brut.slice(ouvre + 1, f));
+    pos = f + fin.length;
+  }
+  return trouves;
+}
+const contenu = (bloc, nom) => contenus(bloc, nom, 1)[0] || '';
 
 async function telecharger(url) {
   const arret = new AbortController();
@@ -65,7 +124,15 @@ async function telecharger(url) {
       headers: { 'User-Agent': AGENT, Accept: 'application/rss+xml, application/xml, application/json, text/xml, */*' },
     });
     if (!rep.ok) throw new Error(rep.status === 429 ? 'trop de requêtes (429)' : `réponse ${rep.status}`);
-    return await rep.text();
+    if (Number(rep.headers.get('content-length')) > MAX_REPONSE || !rep.body) throw new Error('réponse trop volumineuse ou vide');
+    const morceaux = [];
+    let taille = 0;
+    for await (const morceau of rep.body) {
+      taille += morceau.length;
+      if (taille > MAX_REPONSE) { arret.abort(); throw new Error('réponse trop volumineuse'); }
+      morceaux.push(morceau);
+    }
+    return Buffer.concat(morceaux).toString('utf8');
   } finally {
     clearTimeout(minuterie);
   }
@@ -77,14 +144,15 @@ const RE_SIGNATURE = /(The post|Cet article|L’article|L'article) .{0,400}?(app
 const LECTEURS = {
   async rss(source) {
     const xml = await telecharger(source.url);
-    const blocs = xml.match(/<item[\s>][\s\S]*?<\/item>/gi) || xml.match(/<entry[\s>][\s\S]*?<\/entry>/gi) || [];
-    if (!blocs.length && !/<(rss|feed|rdf)/i.test(xml)) throw new Error('flux illisible');
-    return blocs.map(b => ({
-      titre: texte(balise(b, 'title')),
-      lien: texte(balise(b, 'link')) || (b.match(/<link[^>]*href="([^"]+)"/i) || [])[1] || '',
-      date: texte(balise(b, 'pubDate') || balise(b, 'dc:date') || balise(b, 'published') || balise(b, 'updated')),
-      categories: balises(b, 'category').map(texte).filter(Boolean),
-      texte: texte(balise(b, 'content:encoded') || balise(b, 'description') || balise(b, 'summary'))
+    let articles = decouper(xml, 'item');
+    if (!articles.length) articles = decouper(xml, 'entry');
+    if (!articles.length && !/<(rss|feed|rdf)/i.test(xml.slice(0, 5000))) throw new Error('flux illisible');
+    return articles.map(b => ({
+      titre: texte(contenu(b, 'title')),
+      lien: texte(contenu(b, 'link')) || (b.brut.match(/<link[^<>]*href="([^"<>]+)"/i) || [])[1] || '',
+      date: texte(contenu(b, 'pubDate') || contenu(b, 'dc:date') || contenu(b, 'published') || contenu(b, 'updated')),
+      categories: contenus(b, 'category').map(texte).filter(Boolean),
+      texte: texte(contenu(b, 'content:encoded') || contenu(b, 'description') || contenu(b, 'summary'))
         .replace(RE_SIGNATURE, '').replace(/\s*(\[…\]|\[\.\.\.\]|Read more)\s*$/i, '').trim().slice(0, 4000),
     }));
   },
@@ -462,7 +530,7 @@ async function collecter() {
   const profil = config.profil || {};
   const maintenant = new Date();
   const horodatage = maintenant.toISOString();
-  const archive = lireJson(F_ARCHIVE, { items: [], sources: [] });
+  const archive = lireAvecSecours(F_ARCHIVE, { items: [], sources: [] });
   const etat = lireJson(F_ETAT, {});
   const connus = new Map(archive.items.map(o => [o.id, o]));
   const etatsPrecedents = new Map((archive.sources || []).map(s => [s.id, s]));
@@ -522,10 +590,19 @@ async function collecter() {
     sourcesEnErreur: etatsSources.filter(s => !s.ok).map(s => `${s.nom} : ${s.erreur}`),
   };
 
+  // Garde-fou : une archive qui fond de plus de moitié en une collecte signale une erreur, pas une purge normale.
+  const avant = (archive.items || []).length;
+  if (avant >= 40 && items.length < avant / 2 && process.env.ACCEPTER_CHUTE !== '1') {
+    throw new Error(`l'archive passerait de ${avant} à ${items.length} annonces : écriture refusée. Relancer avec ACCEPTER_CHUTE=1 si c'est voulu.`);
+  }
+
   fs.mkdirSync(DONNEES, { recursive: true });
-  fs.writeFileSync(F_ARCHIVE, JSON.stringify({ majLe: horodatage, bilan, sources: etatsSources, items }, null, 1));
+  // Première écriture de la journée : l'archive de la veille devient la copie de secours.
+  // On réécrit l'archive telle qu'elle a été lue, et non le fichier, qui peut être celui qu'on vient de réparer.
+  if (archive.majLe && archive.majLe.slice(0, 10) !== horodatage.slice(0, 10)) ecrireSur(cheminSecours(F_ARCHIVE), JSON.stringify(archive));
+  ecrireSur(F_ARCHIVE, JSON.stringify({ majLe: horodatage, bilan, sources: etatsSources, items }, null, 1));
   const resume = redigerResume(items, nouveaux, etat, maintenant);
-  fs.writeFileSync(F_RESUME, resume.texte);
+  ecrireSur(F_RESUME, resume.texte);
   try {
     // Pas de message quand il n'y a rien de nouveau : la collecte tourne plusieurs fois par jour.
     bilan.telegram = resume.aSignaler ? await envoyerTelegram(config, resume.texte) : null;

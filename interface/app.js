@@ -3,8 +3,9 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
 const lienSur = u => (/^https?:\/\//i.test(u || '') ? u : '#');
+const connu = (table, cle) => typeof cle === 'string' && Object.prototype.hasOwnProperty.call(table, cle);
 
 const ICONES = {
   liste: '<path d="M4 6.5h16M4 12h16M4 17.5h10"/>',
@@ -38,17 +39,20 @@ const LIB = {
 const DEFAUT = { type: ['appel', 'concours', 'bourse', 'marche', 'autre'], elig: ['madagascar', 'ensemble', 'mondial', 'verifier'], porteur: [] };
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const MOIS_TUILE = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'];
+const MOIS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const INITIALES = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const JOUR = 86400000;
 const CLE_ETAT = 'veille-madagascar-etat';
+// Nombre de lignes dessinées d'un coup : la suite arrive au défilement.
+const PAS = 100;
 const etatVide = () => ({ retenues: {}, ecartees: {}, avis: {}, vues: {}, visites: {} });
 
 const E = {
-  items: [], maj: null, sources: [], manuelles: [], calendrier: { evenements: [] }, resume: '',
+  items: [], maj: null, sources: [], manuelles: [], calendrier: [], resume: '',
   etat: etatVide(), api: true, charge: false, collecte: false,
   vue: 'opportunites', portee: 'atraiter', porteeEch: 'toutes', porteeSites: 'du', tri: 'pertinence', q: '',
   f: { type: new Set(DEFAUT.type), elig: new Set(DEFAUT.elig), porteur: new Set() },
-  sel: null, visibles: [],
+  sel: null, visibles: [], limite: PAS,
 };
 
 // ---------- Dates ----------
@@ -65,9 +69,82 @@ function ilYA(iso) {
   const j = Math.round(min / 1440);
   return j === 1 ? 'hier' : `il y a ${j} jours`;
 }
-const libJours = (j, o) => (j === null ? (o && o.permanent ? 'En continu' : '') : j < 0 ? 'Clos' : j === 0 ? 'Aujourd’hui' : j === 1 ? 'Demain' : `J-${j}`);
+const libJours = o => (o.jours === null ? (o.permanent ? 'En continu' : '') : o.jours < 0 ? 'Clos' : o.jours === 0 ? 'Aujourd’hui' : o.jours === 1 ? 'Demain' : `J-${o.jours}`);
 
-// ---------- Données et état ----------
+// ---------- Données ----------
+// Tout ce qui vient des fichiers de données est ramené ici à des valeurs connues ou à du texte borné.
+// Le reste du code peut alors placer ces valeurs dans la page sans risque d'injection.
+const texteSur = (v, max) => (v === null || v === undefined ? '' : String(v).slice(0, max));
+const tableau = v => (Array.isArray(v) ? v : []);
+const entier = (v, min, max, defaut) => { const n = Math.trunc(Number(v)); return n >= min && n <= max ? n : defaut; };
+const jourValide = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(deIso(v).getTime()) ? v : null);
+const instantValide = v => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+const adresseValide = v => (typeof v === 'string' && /^https?:\/\//i.test(v) ? v.slice(0, 1000) : null);
+
+function assainirAnnonce(o) {
+  const echeance = jourValide(o.echeance);
+  return {
+    id: texteSur(o.id, 80),
+    titre: texteSur(o.titre, 300),
+    lien: adresseValide(o.lien),
+    source: texteSur(o.source, 40),
+    sourceNom: texteSur(o.sourceNom, 80),
+    publie: instantValide(o.publie),
+    premiereVue: instantValide(o.premiereVue) || '',
+    type: connu(LIB.type, o.type) ? o.type : 'autre',
+    eligibilite: connu(LIB.elig, o.eligibilite) ? o.eligibilite : 'verifier',
+    preuve: texteSur(o.preuve, 400),
+    porteurs: tableau(o.porteurs).filter(p => connu(LIB.porteur, p)),
+    themes: tableau(o.themes).filter(t => connu(LIB.theme, t)),
+    echeance,
+    jours: joursAvant(echeance),
+    montant: texteSur(o.montant, 80),
+    resume: texteSur(o.resume, 700),
+    aussiSur: tableau(o.aussiSur).map(s => texteSur(s, 80)),
+    score: entier(o.score, 0, 200, 0),
+    permanent: o.permanent === true,
+    presse: o.presse === true,
+    verif: o.verif === 'officiel' || o.verif === 'recherche' ? o.verif : null,
+    verifLe: jourValide(o.verifLe),
+  };
+}
+
+const assainirSite = s => ({
+  id: texteSur(s.id, 60),
+  groupe: texteSur(s.groupe, 80),
+  nom: texteSur(s.nom, 120),
+  adresse: texteSur(s.adresse, 120),
+  url: adresseValide(s.url),
+  quoi: texteSur(s.quoi, 300),
+  pourquoi: texteSur(s.pourquoi, 300),
+  rythme: connu(LIB.rythme, s.rythme) || s.rythme === 'saison' ? s.rythme : 'mois',
+  mois: tableau(s.mois).map(m => entier(m, 1, 12, 0)).filter(Boolean),
+  quand: texteSur(s.quand, 80),
+  constat: texteSur(s.constat, 400),
+  suivi: texteSur(s.suivi, 300),
+});
+
+const assainirEvenement = e => ({
+  nom: texteSur(e.nom, 120),
+  debut: entier(e.debut, 1, 12, 1),
+  fin: entier(e.fin, 1, 12, 12),
+  fenetre: texteSur(e.fenetre, 120),
+  public: texteSur(e.public, 200),
+  montant: texteSur(e.montant, 80),
+  url: adresseValide(e.url),
+  officiel: e.verif === 'officiel',
+});
+
+const assainirSource = s => ({
+  nom: texteSur(s.nom, 80),
+  ok: s.ok === true,
+  erreur: texteSur(s.erreur, 120),
+  lus: entier(s.lus, 0, 1e6, 0),
+  gardes: entier(s.gardes, 0, 1e6, 0),
+  dernierArticle: instantValide(s.dernierArticle),
+  dernierSucces: instantValide(s.dernierSucces),
+});
+
 async function lire(url, defaut, texte) {
   try {
     const r = await fetch(url, { cache: 'no-store' });
@@ -80,19 +157,19 @@ async function chargerDonnees() {
   const [archive, manuelles, calendrier, resume] = await Promise.all([
     lire('donnees/opportunites.json', null),
     lire('donnees/sources-manuelles.json', []),
-    lire('donnees/calendrier.json', { evenements: [] }),
+    lire('donnees/calendrier.json', {}),
     lire('donnees/resume.txt', '', true),
   ]);
-  E.manuelles = manuelles;
-  E.calendrier = calendrier;
-  E.resume = resume;
-  E.charge = !!archive;
-  if (archive) {
-    E.items = archive.items || [];
-    E.maj = archive.majLe;
-    E.sources = archive.sources || [];
+  E.manuelles = tableau(manuelles).map(assainirSite).filter(s => s.id && s.nom);
+  E.calendrier = tableau(calendrier && calendrier.evenements).map(assainirEvenement).filter(e => e.nom);
+  E.resume = texteSur(resume, 20000);
+  E.charge = !!(archive && Array.isArray(archive.items));
+  if (E.charge) {
+    E.items = archive.items.map(assainirAnnonce).filter(o => o.id && o.titre);
+    E.maj = instantValide(archive.majLe);
+    E.sources = tableau(archive.sources).map(assainirSource);
   }
-  return !!archive;
+  return E.charge;
 }
 
 const etatEstVide = e => !e || !Object.keys(etatVide()).some(cle => e[cle] && typeof e[cle] === 'object' && Object.keys(e[cle]).length);
@@ -128,12 +205,14 @@ function sauver() {
 }
 
 // ---------- Sélection des annonces ----------
-const expiree = o => { const j = joursAvant(o.echeance); return j !== null && j < 0; };
+const expiree = o => o.jours !== null && o.jours < 0;
 const eligDe = o => (E.etat.avis[o.id] === 'oui' ? 'madagascar' : E.etat.avis[o.id] === 'non' ? 'autre' : o.eligibilite);
 const libElig = o => (E.etat.avis[o.id] === 'oui' ? 'Éligible, confirmé par vous' : E.etat.avis[o.id] === 'non' ? 'Non éligible selon vous' : LIB.elig[o.eligibilite]);
 const retenue = o => !!E.etat.retenues[o.id];
 const ecartee = o => !!E.etat.ecartees[o.id];
 const parDefaut = o => DEFAUT.type.includes(o.type) && DEFAUT.elig.includes(eligDe(o));
+// Texte de recherche d'une annonce, calculé une fois puis gardé.
+const cible = o => o.cible || (o.cible = norm(`${o.titre} ${o.sourceNom} ${o.resume} ${o.montant}`));
 
 function dansPortee(o) {
   if (E.vue === 'echeances') return !!o.echeance && !expiree(o) && !ecartee(o) && (E.porteeEch === 'toutes' || retenue(o));
@@ -144,21 +223,19 @@ function dansPortee(o) {
 // Ce que l'utilisateur a retenu ou écarté lui-même reste visible quel que soit le filtre de type ou de zone.
 const filtresLibres = () => (E.vue === 'echeances' ? E.porteeEch === 'retenues' : E.portee !== 'atraiter');
 
-function passeFiltres(o) {
-  if (!filtresLibres() && (!E.f.type.has(o.type) || !E.f.elig.has(eligDe(o)))) return false;
+function passeFiltres(o, libres, mots) {
+  if (!libres && (!E.f.type.has(o.type) || !E.f.elig.has(eligDe(o)))) return false;
   if (E.f.porteur.size && !o.porteurs.some(p => E.f.porteur.has(p))) return false;
-  if (E.q) {
-    const cible = norm(`${o.titre} ${o.sourceNom} ${o.resume || ''} ${o.montant || ''}`);
-    if (!norm(E.q).split(/\s+/).every(mot => cible.includes(mot))) return false;
-  }
+  if (mots) { const c = cible(o); if (!mots.every(mot => c.includes(mot))) return false; }
   return true;
 }
 
+const ordre = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 function trier(items) {
   const limite = o => o.echeance || '9999';
-  if (E.vue === 'echeances' || E.tri === 'echeance') return items.sort((a, b) => limite(a).localeCompare(limite(b)) || b.score - a.score);
-  if (E.tri === 'recent') return items.sort((a, b) => (b.publie || b.premiereVue).localeCompare(a.publie || a.premiereVue));
-  return items.sort((a, b) => b.score - a.score || limite(a).localeCompare(limite(b)));
+  if (E.vue === 'echeances' || E.tri === 'echeance') return items.sort((a, b) => ordre(limite(a), limite(b)) || b.score - a.score);
+  if (E.tri === 'recent') return items.sort((a, b) => ordre(b.publie || b.premiereVue, a.publie || a.premiereVue));
+  return items.sort((a, b) => b.score - a.score || ordre(limite(a), limite(b)));
 }
 
 const delaiSite = { semaine: 7, mois: 30, trimestre: 90 };
@@ -167,28 +244,41 @@ function aVisiter(s) {
   const visite = E.etat.visites[s.id] ? new Date(E.etat.visites[s.id]) : null;
   const n = new Date();
   if (s.rythme === 'saison') {
-    return (s.mois || []).includes(n.getMonth() + 1) && !(visite && visite.getMonth() === n.getMonth() && visite.getFullYear() === n.getFullYear());
+    return s.mois.includes(n.getMonth() + 1) && !(visite && visite.getMonth() === n.getMonth() && visite.getFullYear() === n.getFullYear());
   }
   return !visite || (n - visite) / JOUR > delaiSite[s.rythme];
 }
 
 // ---------- Barre latérale ----------
-function compteurs() {
-  const actifs = E.items.filter(o => parDefaut(o) && !ecartee(o) && !expiree(o));
-  const sous14 = actifs.filter(o => { const j = joursAvant(o.echeance); return j !== null && j <= 14; });
-  const urgentes = sous14.filter(o => retenue(o) && joursAvant(o.echeance) <= 3);
-  return {
-    opportunites: { n: actifs.filter(o => !retenue(o)).length },
-    echeances: urgentes.length ? { n: urgentes.length, alerte: true } : { n: sous14.length },
-    manuelle: { n: E.manuelles.filter(aVisiter).length },
-    sources: { n: E.sources.filter(s => !s.ok).length, alerte: true },
-  };
+function decompte() {
+  const d = { aTraiter: 0, nonLues: 0, sous3: 0, sous14: 0, urgentes: 0, retenues: 0, retenuesDatees: 0 };
+  for (const o of E.items) {
+    const ret = retenue(o);
+    if (ret) d.retenues++;
+    if (!parDefaut(o) || ecartee(o) || expiree(o)) continue;
+    if (!ret) { d.aTraiter++; if (!E.etat.vues[o.id]) d.nonLues++; }
+    if (ret && o.echeance) d.retenuesDatees++;
+    if (o.jours !== null && o.jours <= 14) {
+      d.sous14++;
+      if (o.jours <= 3) { d.sous3++; if (ret) d.urgentes++; }
+    }
+  }
+  return d;
 }
 
 function majBarre() {
-  const c = E.charge ? compteurs() : {};
+  let pastilles = {};
+  if (E.charge) {
+    const d = decompte();
+    pastilles = {
+      opportunites: { n: d.aTraiter },
+      echeances: d.urgentes ? { n: d.urgentes, alerte: true } : { n: d.sous14 },
+      manuelle: { n: E.manuelles.filter(aVisiter).length },
+      sources: { n: E.sources.filter(s => !s.ok).length, alerte: true },
+    };
+  }
   $('#menu').innerHTML = VUES.map(v => {
-    const k = c[v.id];
+    const k = pastilles[v.id];
     const pastille = k && k.n ? `<span class="compteur ${k.alerte ? 'alerte' : ''}">${k.n}</span>` : '';
     return `<li><button type="button" data-vue="${v.id}" ${v.id === E.vue ? 'aria-current="page"' : ''}>${ico(v.icone)}<span class="long">${v.nom}</span><span class="court">${v.court}</span>${pastille}</button></li>`;
   }).join('');
@@ -204,13 +294,15 @@ function majBarre() {
 
 // ---------- Vues liste : opportunités et échéances ----------
 function menuFiltre(groupe, titre, aide) {
-  const base = E.items.filter(o => (E.vue === 'echeances' ? !!o.echeance && !expiree(o) && !ecartee(o) : !retenue(o) && !ecartee(o) && !expiree(o)));
   const cle = groupe === 'porteur' ? o => o.porteurs : groupe === 'elig' ? o => [eligDe(o)] : o => [o.type];
+  const compte = {};
+  for (const o of E.items) {
+    const dedans = E.vue === 'echeances' ? !!o.echeance && !expiree(o) && !ecartee(o) : !retenue(o) && !ecartee(o) && !expiree(o);
+    if (dedans) for (const valeur of cle(o)) compte[valeur] = (compte[valeur] || 0) + 1;
+  }
   const modifie = [...E.f[groupe]].sort().join() !== [...DEFAUT[groupe]].sort().join();
-  const cases = Object.entries(LIB[groupe]).map(([valeur, libelle]) => {
-    const n = base.filter(o => cle(o).includes(valeur)).length;
-    return `<label><input type="checkbox" data-filtre="${groupe}" value="${valeur}" ${E.f[groupe].has(valeur) ? 'checked' : ''}>${libelle}<span class="c">${n}</span></label>`;
-  }).join('');
+  const cases = Object.entries(LIB[groupe]).map(([valeur, libelle]) =>
+    `<label><input type="checkbox" data-filtre="${groupe}" value="${valeur}" ${E.f[groupe].has(valeur) ? 'checked' : ''}>${libelle}<span class="c">${compte[valeur] || 0}</span></label>`).join('');
   return `<details class="filtre ${modifie ? 'modifie' : ''}" data-groupe="${groupe}"><summary>${titre}</summary><div class="pop">${cases}<small>${aide}</small></div></details>`;
 }
 
@@ -241,11 +333,10 @@ function vueListe() {
 }
 
 function ligne(o) {
-  const j = joursAvant(o.echeance);
   let tuile;
   if (o.echeance) {
     const d = deIso(o.echeance);
-    const etat = j < 0 ? 'clos' : j <= 3 ? 'imminent' : j <= 14 ? 'bientot' : '';
+    const etat = o.jours < 0 ? 'clos' : o.jours <= 3 ? 'imminent' : o.jours <= 14 ? 'bientot' : '';
     tuile = `<div class="date ${etat}"><b>${d.getDate()}</b><span>${MOIS_TUILE[d.getMonth()]}</span></div>`;
   } else {
     tuile = `<div class="date vide" title="${o.permanent ? 'Candidatures en continu' : 'Date limite inconnue'}"><b>${o.permanent ? '∞' : '—'}</b></div>`;
@@ -259,46 +350,62 @@ function ligne(o) {
   return `<li class="ligne ${o.id === E.sel ? 'sel' : ''} ${E.etat.vues[o.id] ? '' : 'nonlue'}" data-id="${esc(o.id)}">
       ${tuile}
       <div><h3>${esc(o.titre)}</h3><p class="meta">${meta}</p><div class="etiquettes">${tags.join('')}</div></div>
-      <div class="cote"><span class="jours">${libJours(j, o)}</span>
+      <div class="cote"><span class="jours">${libJours(o)}</span>
         <button class="etoile" type="button" data-retenir="${esc(o.id)}" aria-pressed="${ret}" aria-label="${ret ? 'Ne plus retenir' : 'Retenir'}" title="${ret ? 'Ne plus retenir' : 'Retenir'}">${ico('etoile')}</button></div>
     </li>`;
 }
 
-function majListe() {
+// Redessine la liste. Seules les E.limite premières lignes sont créées : avec un millier d'annonces,
+// tout dessiner à chaque clic coûtait près d'une seconde.
+function majListe(garderFenetre) {
   const el = $('#liste');
   if (!el) return;
-  const items = trier(E.items.filter(o => dansPortee(o) && passeFiltres(o)));
+  if (!garderFenetre) E.limite = PAS;
+  const libres = filtresLibres();
+  const mots = E.q ? norm(E.q).split(/\s+/).filter(Boolean) : null;
+  const items = trier(E.items.filter(o => dansPortee(o) && passeFiltres(o, libres, mots)));
   E.visibles = items.map(o => o.id);
+  const montrees = items.slice(0, E.limite);
   const haut = el.scrollTop;
 
+  let html;
   if (!items.length) {
     const vide = E.vue === 'echeances' ? 'Aucune échéance à venir' : E.portee === 'retenues' ? 'Rien de retenu pour l’instant' : E.portee === 'ecartees' ? 'Rien d’écarté' : 'Aucune opportunité ne correspond';
     const aide = E.portee === 'retenues' && E.vue !== 'echeances' ? 'Cliquez sur l’étoile d’une annonce pour la retrouver ici, avec un rappel avant sa date limite.' : 'Élargissez les filtres ou effacez la recherche.';
-    el.innerHTML = `<div class="vide-liste"><b>${vide}</b>${aide}</div>`;
+    html = `<div class="vide-liste"><b>${vide}</b>${aide}</div>`;
   } else if (E.vue === 'echeances') {
     const groupes = [[1, 'Aujourd’hui et demain'], [7, 'Cette semaine'], [14, 'Sous 14 jours'], [30, 'Sous 30 jours'], [Infinity, 'Plus tard']];
-    let html = '', courant = -1;
-    for (const o of items) {
-      const g = groupes.findIndex(([max]) => joursAvant(o.echeance) <= max);
+    let courant = -1;
+    html = '';
+    for (const o of montrees) {
+      const g = groupes.findIndex(([max]) => o.jours <= max);
       if (g !== courant) { if (courant >= 0) html += '</ul>'; html += `<h2 class="groupe">${groupes[g][1]}</h2><ul>`; courant = g; }
       html += ligne(o);
     }
-    el.innerHTML = `${html}</ul>`;
+    html += '</ul>';
   } else {
-    el.innerHTML = `<ul>${items.map(ligne).join('')}</ul>`;
+    html = `<ul>${montrees.map(ligne).join('')}</ul>`;
   }
-  el.scrollTop = haut;
+  const reste = items.length - montrees.length;
+  if (reste > 0) html += `<button class="suite" type="button" data-suite>Afficher la suite · ${reste} ${reste > 1 ? 'annonces restantes' : 'annonce restante'}</button>`;
+  el.innerHTML = html;
+  // Toucher à scrollTop oblige le navigateur à mettre la liste en page sur-le-champ : on ne le fait que si nécessaire.
+  if (haut) el.scrollTop = garderFenetre ? haut : 0;
+  majChiffres();
+}
 
-  const actifs = E.items.filter(o => parDefaut(o) && !ecartee(o) && !expiree(o));
-  const sous = n => actifs.filter(o => { const j = joursAvant(o.echeance); return j !== null && j <= n; }).length;
+function majChiffres() {
+  const el = $('#chiffres');
+  if (!el) return;
+  const d = decompte();
   const chiffres = E.vue === 'echeances'
-    ? [[sous(3), 'sous 3 jours', sous(3) > 0], [sous(14), 'sous 14 jours'], [actifs.filter(o => retenue(o) && o.echeance).length, 'retenues datées']]
-    : [[actifs.filter(o => !retenue(o)).length, 'à traiter'], [actifs.filter(o => !retenue(o) && !E.etat.vues[o.id]).length, 'non lues'], [sous(14), 'sous 14 jours'], [E.items.filter(retenue).length, 'retenues']];
-  $('#chiffres').innerHTML = chiffres.map(([n, l, urgent]) => `<div class="chiffre ${urgent ? 'urgent' : ''}"><b>${n}</b><span>${l}</span></div>`).join('');
+    ? [[d.sous3, 'sous 3 jours', d.sous3 > 0], [d.sous14, 'sous 14 jours'], [d.retenuesDatees, 'retenues datées']]
+    : [[d.aTraiter, 'à traiter'], [d.nonLues, 'non lues'], [d.sous14, 'sous 14 jours'], [d.retenues, 'retenues']];
+  el.innerHTML = chiffres.map(([n, l, urgent]) => `<div class="chiffre ${urgent ? 'urgent' : ''}"><b>${n}</b><span>${l}</span></div>`).join('');
   const lues = E.sources.filter(s => s.ok).length;
   $('#sous-titre').textContent = E.vue === 'echeances'
     ? 'Classées par date limite. Les dates sont lues dans les annonces : à confirmer avant de déposer un dossier.'
-    : `${items.length} affichées · collecte ${ilYA(E.maj)} sur ${lues} sources`;
+    : `${E.visibles.length} affichées · collecte ${ilYA(E.maj)} sur ${lues} sources`;
 }
 
 function majFiche() {
@@ -311,11 +418,11 @@ function majFiche() {
       <div class="touches"><span><kbd>↑</kbd> <kbd>↓</kbd> parcourir</span><span><kbd>S</kbd> retenir</span><span><kbd>X</kbd> écarter</span><span><kbd>Entrée</kbd> ouvrir</span><span><kbd>/</kbd> chercher</span></div></div>`;
     return;
   }
-  const j = joursAvant(o.echeance);
   const e = eligDe(o);
   const avis = E.etat.avis[o.id];
-  const limite = o.echeance ? `${dateLongue(deIso(o.echeance))} · ${libJours(j)}` : o.permanent ? 'Aucune : candidatures en continu' : 'Inconnue : non trouvée dans l’annonce';
-  const verif = o.source !== 'reperage' ? null : o.verif === 'officiel' ? `Site officiel lu le ${dateLongue(deIso(o.verifLe))}` : `D’après un agrégateur le ${dateLongue(deIso(o.verifLe))} : à confirmer`;
+  const limite = o.echeance ? `${dateLongue(deIso(o.echeance))} · ${libJours(o)}` : o.permanent ? 'Aucune : candidatures en continu' : 'Inconnue : non trouvée dans l’annonce';
+  const quand = o.verifLe ? ` le ${dateLongue(deIso(o.verifLe))}` : '';
+  const verif = o.source !== 'reperage' || !o.verif ? null : o.verif === 'officiel' ? `Site officiel lu${quand}` : `D’après un agrégateur${quand} : à confirmer`;
   const faits = [
     ['Date limite', limite],
     ['Montant repéré', o.montant],
@@ -323,7 +430,7 @@ function majFiche() {
     ['Pour', o.porteurs.map(p => LIB.porteur[p]).join(', ')],
     ['Thèmes', o.themes.map(t => LIB.theme[t]).join(', ')],
     ['Source', o.sourceNom],
-    ['Aussi vu sur', (o.aussiSur || []).join(', ')],
+    ['Aussi vu sur', o.aussiSur.join(', ')],
     ['Publié le', o.publie ? dateLongue(new Date(o.publie)) : null],
     ['Vérification', verif],
   ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
@@ -352,14 +459,35 @@ function majFiche() {
   el.scrollTop = 0;
 }
 
+const ligneDe = id => (id ? $(`.ligne[data-id="${CSS.escape(id)}"]`) : null);
+
+// Changer de sélection ne redessine pas la liste : seules les deux lignes concernées sont retouchées.
 function selectionner(id) {
+  const ancienne = E.sel;
   E.sel = id;
   if (id && !E.etat.vues[id]) { E.etat.vues[id] = 1; sauver(); }
-  majListe();
+  const rang = E.visibles.indexOf(id);
+  if (rang >= E.limite) {
+    E.limite = (Math.floor(rang / PAS) + 1) * PAS;
+    majListe(true);
+  } else {
+    const avant = ligneDe(ancienne);
+    if (avant) avant.classList.remove('sel');
+    const apres = ligneDe(id);
+    if (apres) { apres.classList.add('sel'); apres.classList.remove('nonlue'); }
+    majChiffres();
+  }
   majFiche();
   majBarre();
-  const el = id && $(`.ligne[data-id="${CSS.escape(id)}"]`);
+  const el = ligneDe(id);
   if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
+function apresChangement() {
+  sauver();
+  majListe(true);
+  majFiche();
+  majBarre();
 }
 
 function basculer(table, id, message) {
@@ -369,10 +497,7 @@ function basculer(table, id, message) {
     delete E.etat[table === 'retenues' ? 'ecartees' : 'retenues'][id];
     if (message) toast(message);
   }
-  sauver();
-  majListe();
-  majFiche();
-  majBarre();
+  apresChangement();
 }
 
 // ---------- Calendrier annuel ----------
@@ -380,23 +505,23 @@ function vueCalendrier() {
   const m = new Date().getMonth() + 1;
   const ouvert = e => (e.debut <= e.fin ? m >= e.debut && m <= e.fin : m >= e.debut || m <= e.fin);
   const attente = e => (e.debut - m + 12) % 12;
-  const evenements = [...E.calendrier.evenements].sort((a, b) => ouvert(b) - ouvert(a) || attente(a) - attente(b) || a.nom.localeCompare(b.nom));
+  const evenements = [...E.calendrier].sort((a, b) => ouvert(b) - ouvert(a) || attente(a) - attente(b) || a.nom.localeCompare(b.nom));
   const fenetres = e => (e.debut <= e.fin ? [[e.debut, e.fin]] : [[e.debut, 12], [1, e.fin]])
-    .map(([a, b]) => `<i class="fen ${e.verif === 'officiel' ? '' : 'incertain'}" style="grid-column:${a} / ${b + 1}"></i>`).join('');
+    .map(([a, b]) => `<i class="fen ${e.officiel ? '' : 'incertain'}" style="grid-column:${a} / ${b + 1}"></i>`).join('');
   const rang = e => `<div class="rang ${ouvert(e) ? 'ouvert' : ''}">
-      <div class="rang-nom">${e.url ? `<a href="${esc(lienSur(e.url))}" target="_blank" rel="noopener noreferrer">${esc(e.nom)}</a>` : `<b>${esc(e.nom)}</b>`}
+      <div class="rang-nom">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.nom)}</a>` : `<b>${esc(e.nom)}</b>`}
         <small>${esc([e.fenetre, e.montant].filter(Boolean).join(' · '))}</small><small>${esc(e.public)}</small></div>
       <div class="piste" role="img" aria-label="${esc(`Fenêtre : ${e.fenetre}`)}">${fenetres(e)}</div>
     </div>`;
   const guichets = E.items.filter(o => o.permanent).map(o => `<div class="site">
       <h3>${esc(o.titre)}</h3>
-      <a class="adresse" href="${esc(lienSur(o.lien))}" target="_blank" rel="noopener noreferrer"><span>${esc(o.lien.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))}</span>${ico('externe', 'petit')}</a>
+      <a class="adresse" href="${esc(lienSur(o.lien))}" target="_blank" rel="noopener noreferrer"><span>${esc((o.lien || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))}</span>${ico('externe', 'petit')}</a>
       <p>${esc(o.resume)}</p>${o.montant ? `<p class="pourquoi">${esc(o.montant)}</p>` : ''}
     </div>`).join('');
   const nOuverts = evenements.filter(ouvert).length;
   return `
     <header class="entete"><div><h1>Calendrier annuel</h1>
-      <p>${evenements.length} appels reviennent chaque année. ${nOuverts} ont leur fenêtre habituelle ouverte en ${['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][m - 1]}. Les fenêtres sont celles de la dernière édition connue : à confirmer chaque année.</p></div></header>
+      <p>${evenements.length} appels reviennent chaque année. ${nOuverts} ont leur fenêtre habituelle ouverte en ${MOIS_LONG[m - 1]}. Les fenêtres sont celles de la dernière édition connue : à confirmer chaque année.</p></div></header>
     <div class="page">
       <div class="annee" style="--m:${m}">
         <div class="legende"><span><i class="ouvert"></i>Fenêtre habituelle ouverte ce mois-ci</span><span><i></i>Confirmé sur le site officiel</span><span><i class="incertain"></i>D’après la presse ou un agrégateur</span></div>
@@ -413,10 +538,10 @@ function carteSite(s) {
     return `<li class="site sans"><h3>${esc(s.nom)}</h3><p>${esc(s.constat)}</p><p class="pourquoi">${esc(s.suivi)}</p></li>`;
   }
   const du = aVisiter(s);
-  const visite = E.etat.visites[s.id];
+  const visite = instantValide(E.etat.visites[s.id]);
   return `<li class="site ${du ? 'du' : ''}">
       <div class="site-tete"><h3>${esc(s.nom)}</h3><span class="rythme">${esc(s.rythme === 'saison' ? s.quand : LIB.rythme[s.rythme])}</span></div>
-      <a class="adresse" href="${esc(lienSur(s.url))}" target="_blank" rel="noopener noreferrer" data-site="${esc(s.id)}" title="Ouvrir dans un nouvel onglet"><span>${esc(s.adresse)}</span>${ico('externe', 'petit')}</a>
+      <a class="adresse" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" data-site="${esc(s.id)}" title="Ouvrir dans un nouvel onglet"><span>${esc(s.adresse)}</span>${ico('externe', 'petit')}</a>
       <p>${esc(s.quoi)}</p>
       <p class="pourquoi">${esc(s.pourquoi)}</p>
       <div class="site-pied"><span class="visite">${visite ? `Visité ${ilYA(visite)}` : 'Jamais visité'}</span>
@@ -525,6 +650,9 @@ function changerTheme() {
 }
 
 // ---------- Événements ----------
+const RETENUE = 'Retenue : un rappel apparaîtra avant la date limite.';
+const ECARTEE = 'Écartée. Elle reste consultable dans « Écartées ».';
+
 document.addEventListener('click', ev => {
   const t = ev.target;
   const ouvert = $('details.filtre[open]');
@@ -536,7 +664,8 @@ document.addEventListener('click', ev => {
   if (t.closest('#theme')) return void changerTheme();
 
   const etoile = t.closest('[data-retenir]');
-  if (etoile) return void basculer('retenues', etoile.dataset.retenir, 'Retenue : un rappel apparaîtra avant la date limite.');
+  if (etoile) return void basculer('retenues', etoile.dataset.retenir, RETENUE);
+  if (t.closest('[data-suite]')) { E.limite += PAS; majListe(true); return; }
   const portee = t.closest('[data-portee]');
   if (portee) { E[E.vue === 'echeances' ? 'porteeEch' : 'portee'] = portee.dataset.portee; E.sel = null; rendu(); return; }
   const sites = t.closest('[data-sites]');
@@ -546,11 +675,11 @@ document.addEventListener('click', ev => {
   if (action && E.sel) {
     const a = action.dataset.action;
     if (a === 'fermer') return void selectionner(null);
-    if (a === 'retenir') return void basculer('retenues', E.sel, 'Retenue : un rappel apparaîtra avant la date limite.');
-    if (a === 'ecarter') return void basculer('ecartees', E.sel, 'Écartée. Elle reste consultable dans « Écartées ».');
+    if (a === 'retenir') return void basculer('retenues', E.sel, RETENUE);
+    if (a === 'ecarter') return void basculer('ecartees', E.sel, ECARTEE);
     const valeur = a === 'avis-oui' ? 'oui' : 'non';
     if (E.etat.avis[E.sel] === valeur) delete E.etat.avis[E.sel]; else E.etat.avis[E.sel] = valeur;
-    sauver(); majListe(); majFiche(); majBarre();
+    apresChangement();
     return;
   }
 
@@ -560,7 +689,7 @@ document.addEventListener('click', ev => {
   if (visite) {
     const id = visite.dataset.visite;
     const site = E.manuelles.find(s => s.id === id);
-    if (E.etat.visites[id] && !aVisiter(site)) delete E.etat.visites[id]; else E.etat.visites[id] = new Date().toISOString();
+    if (E.etat.visites[id] && site && !aVisiter(site)) delete E.etat.visites[id]; else E.etat.visites[id] = new Date().toISOString();
     sauver(); rendu();
     return;
   }
@@ -586,9 +715,21 @@ document.addEventListener('change', ev => {
   } else if (t.id === 'tri') { E.tri = t.value; majListe(); }
 });
 
+// La recherche attend une courte pause dans la frappe avant de filtrer.
+let minuterieRecherche;
 document.addEventListener('input', ev => {
-  if (ev.target.id === 'q') { E.q = ev.target.value.trim(); majListe(); }
+  if (ev.target.id !== 'q') return;
+  const valeur = ev.target.value.trim();
+  clearTimeout(minuterieRecherche);
+  minuterieRecherche = setTimeout(() => { E.q = valeur; majListe(); }, 150);
 });
+
+// En approchant du bas de la liste, on dessine les lignes suivantes.
+document.addEventListener('scroll', ev => {
+  const el = ev.target;
+  if (el.id !== 'liste' || E.limite >= E.visibles.length) return;
+  if (el.scrollTop + el.clientHeight > el.scrollHeight - 800) { E.limite += PAS; majListe(true); }
+}, true);
 
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape') {
@@ -605,8 +746,8 @@ document.addEventListener('keydown', ev => {
   else if (ev.key === 'ArrowUp' || touche === 'k') { ev.preventDefault(); selectionner(E.visibles[Math.max(i - 1, 0)] || null); }
   else if (ev.key === '/') { ev.preventDefault(); $('#q').focus(); }
   else if (!E.sel) return;
-  else if (touche === 's') basculer('retenues', E.sel, 'Retenue : un rappel apparaîtra avant la date limite.');
-  else if (touche === 'x') basculer('ecartees', E.sel, 'Écartée. Elle reste consultable dans « Écartées ».');
+  else if (touche === 's') basculer('retenues', E.sel, RETENUE);
+  else if (touche === 'x') basculer('ecartees', E.sel, ECARTEE);
   else if (ev.key === 'Enter') { const o = E.items.find(x => x.id === E.sel); if (o) window.open(lienSur(o.lien), '_blank', 'noopener'); }
 });
 
