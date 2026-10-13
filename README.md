@@ -124,20 +124,6 @@ Le titre est comparé à des mots-clés, dans cet ordre : emploi, marché ou con
 
 Une date n'est retenue que si elle suit un mot comme « deadline », « closing date », « date limite » ou « jusqu'au ». Sinon elle reste inconnue : l'outil ne devine pas. Le montant affiché est le premier montant écrit dans l'annonce ; ce n'est pas toujours celui de la subvention.
 
-### La pertinence
-
-Chaque annonce reçoit une note de 0 à 100, qui sert au tri.
-
-| Critère | Points |
-| --- | --- |
-| Éligibilité | Madagascar cité 55, ensemble régional 40, ouvert au monde 28, à vérifier 15, autre zone 0 |
-| Type | Appel à projets ou concours 20, bourse ou programme 16, autre 6, emploi 2, marché 0 |
-| Porteur visé présent dans le profil | 4 par porteur, 12 au plus |
-| Thème présent dans le profil | 3 par thème, 9 au plus |
-| Date limite sous 14 jours | 6 |
-| Article de presse | −35 |
-| Fiche saisie à la main | +5 |
-
 ### Les doublons et la conservation
 
 - Deux annonces de sources différentes sont fusionnées quand leurs titres partagent l'essentiel de leurs mots. La fiche indique alors « Aussi vu sur ».
@@ -346,20 +332,6 @@ Tout changement envoyé sur la branche `main` relance une collecte et republie l
 
 Une erreur de syntaxe, un test en échec ou une erreur du collecteur arrêtent l'exécution avant la publication : la page reste sur sa dernière version. Une erreur d'affichage qui n'est ni une faute de syntaxe ni un cas couvert par les tests peut encore partir en ligne. Il vaut donc mieux essayer en local avant d'envoyer.
 
-### Deux réglages à activer vous-même sur GitHub
-
-Ces deux protections se règlent dans l'interface de GitHub, par le propriétaire du dépôt.
-
-1. **Détection de secrets.** Settings, puis « Advanced Security » (ou « Code security ») : activer « Secret Protection » et « Push protection ». GitHub refusera alors tout envoi contenant un jeton ou un mot de passe reconnu.
-2. **Protection de la branche principale.** Settings, Rules, Rulesets, « New branch ruleset » : cibler la branche par défaut, cocher « Restrict deletions » et « Block force pushes », puis passer la règle en « Active ». La branche `donnees`, réécrite à chaque collecte, ne doit pas être ciblée.
-
-### Recevoir le résumé sur Telegram
-
-1. Créer un bot avec @BotFather sur Telegram et noter son jeton.
-2. Écrire un message au bot, puis relever l'identifiant de la conversation.
-3. Dans le dépôt : Settings, Secrets and variables, Actions. Ajouter deux secrets, `TELEGRAM_JETON` et `TELEGRAM_DESTINATAIRE`.
-
-Un message part seulement quand une collecte trouve du nouveau. Cet envoi est écrit mais n'a pas encore été essayé.
 
 ## Utiliser l'outil sur son ordinateur
 
