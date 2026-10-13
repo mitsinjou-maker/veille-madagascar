@@ -4,7 +4,7 @@ Outil de veille des appels à projets, concours, bourses et marchés ouverts aux
 
 **Site en ligne : <https://mitsinjou-maker.github.io/veille-madagascar/>**
 
-Il lit 9 sources (les agrégateurs toutes les deux heures, la presse et les marchés deux fois par jour), classe chaque annonce selon l'éligibilité de Madagascar, et tient à jour une liste de 37 sites à consulter soi-même. La dernière liste reste lisible sans connexion.
+Il lit 8 sources (les agrégateurs toutes les deux heures, la presse et les marchés deux fois par jour), classe chaque annonce selon l'éligibilité de Madagascar, et tient à jour une liste de 38 sites à consulter soi-même. La dernière liste reste lisible sans connexion.
 
 ![La liste des opportunités et la fiche d'une annonce](docs/apercu-opportunites.jpg)
 
@@ -62,7 +62,7 @@ Trois menus affinent la liste : **Type**, **Éligibilité** et **Porteur**. Au d
 | **Opportunités** | Les annonces collectées, avec trois vues : à traiter, retenues, écartées. |
 | **Échéances** | Les annonces datées, groupées : aujourd'hui et demain, cette semaine, sous 14 jours, sous 30 jours, plus tard. |
 | **Calendrier annuel** | 28 appels qui reviennent chaque année, sur une frise de douze mois, et les guichets ouverts en continu. |
-| **Veille manuelle** | 37 sites à ouvrir soi-même, avec leur rythme de visite et la date de dernière visite. |
+| **Veille manuelle** | 38 sites à ouvrir soi-même, avec leur rythme de visite et la date de dernière visite. |
 | **Sources** | L'état de chaque source automatique et le résumé de la dernière collecte. |
 
 ![Le calendrier annuel](docs/apercu-calendrier.jpg)
@@ -160,7 +160,7 @@ Chaque annonce reçoit une note de 0 à 100, qui sert au tri.
 ### Le rythme des sources
 
 - **Par défaut**, une source est interrogée à chaque collecte, soit toutes les deux heures en ligne.
-- **Rythme lent.** Les deux quotidiens et la Banque mondiale portent `"intervalleHeures": 12` dans `config.json` : ils ne sont relus que deux fois par jour. Une lecture en échec est retentée à la collecte suivante.
+- **Rythme lent.** Midi Madagasikara et la Banque mondiale portent `"intervalleHeures": 12` dans `config.json` : ils ne sont relus que deux fois par jour. Une lecture en échec est retentée à la collecte suivante.
 - **Rien de neuf.** L'outil présente à chaque source ce qu'elle avait annoncé la fois précédente. Si rien n'a changé, elle répond d'une ligne et l'écran Sources affiche « Lue, sans changement ». Toutes les sources ne jouent pas ce jeu : certaines renvoient leur flux entier à chaque fois.
 - **Après un changement de règles.** Les annonces déjà archivées ne sont reclassées que si leur source est relue en entier. C'est automatique quand `config.json` change ; après une modification des règles dans `collecte.js`, augmenter la constante `REGLES`.
 
@@ -178,8 +178,7 @@ Trois listes, toutes modifiables (voir [Personnaliser](#personnaliser)). Elles o
 | [Terra Viva Grants](https://www.terravivagrants.org/feed/) | Environnement, agriculture, climat ; pays éligibles précisés | Flux RSS |
 | [fundsforNGOs](https://www2.fundsforngos.org/feed/) | Appels pour ONG du monde entier, avec la liste des pays visés ; très abondant | Flux RSS |
 | [Les Opportunités](https://www.lesopportunites.com/feed/) | Annonces en français, dont Madagascar : stages, volontariat, consultances | Flux RSS |
-| [Newsmada](https://newsmada.com/feed/) | Presse malgache : seuls les articles parlant d’appels, de concours ou de bourses sont gardés | Flux RSS ; souvent en erreur |
-| [Midi Madagasikara](https://midi-madagasikara.mg/feed/) | Presse malgache, même filtre | Flux RSS |
+| [Midi Madagasikara](https://midi-madagasikara.mg/feed/) | Presse malgache : seuls les articles parlant d’appels, de concours ou de bourses sont gardés | Flux RSS |
 | [Banque mondiale, marchés](https://search.worldbank.org/api/v2/procnotices?format=json&project_ctry_name_exact=Madagascar&rows=40&srt=submission_date&order=desc) | Appels d’offres et manifestations d’intérêt des projets financés à Madagascar | API ouverte |
 
 La collecte se présente aux sites sous le nom `VeilleMadagascar/0.1` et ne lit que les flux que ces sites publient pour cet usage.
@@ -244,13 +243,14 @@ Ces sites refusent les robots, n'ont pas de flux, ou ne publient qu'un appel par
 </details>
 
 <details>
-<summary><b>Relais locaux</b> — 3 adresses</summary>
+<summary><b>Relais locaux</b> — 4 adresses</summary>
 
 | Site | Adresse à ouvrir | Ce qu’on y cherche | Quand y aller |
 | --- | --- | --- | --- |
 | Zafy Tody, incubateur | [zafytody.mg](https://www.zafytody.mg/) | Programmes SEED et RISE, cohortes Miary Digital. | Chaque trimestre |
 | Institut français de Madagascar | [institutfrancais-madagascar.com](https://www.institutfrancais-madagascar.com/) | Agenda culturel, appels aux artistes. | Chaque mois |
 | Capmad, média économique | [capmad.com](https://www.capmad.com/) | Articles relayant concours et appels pour entrepreneurs. | Chaque semaine |
+| Newsmada, quotidien | [newsmada.com](https://newsmada.com/) | Articles annonçant concours, appels à projets et bourses à Madagascar : Prix Orange, Prix Pierre Castel, ambassades. Chercher « appel », « concours », « candidatures ». | Chaque semaine |
 
 </details>
 
@@ -506,7 +506,7 @@ Le code n'a aucune dépendance : pas de `npm install`, pas de dossier `node_modu
 
 | Symptôme | Explication et remède |
 | --- | --- |
-| Une source est « en erreur » dans l'écran Sources | Le site a mis plus de 30 secondes à répondre, ou refuse les serveurs de GitHub (réponses 403 ou 429). C'est arrivé avec Newsmada et Opportunities for Youth. Si l'erreur dure plusieurs jours, passer la source en veille manuelle. |
+| Une source est « en erreur » dans l'écran Sources | Le site a mis plus de 30 secondes à répondre, ou refuse les serveurs de GitHub (réponses 403 ou 429). Si l'erreur dure plusieurs jours, passer la source en veille manuelle : la retirer de `config.json` et l'ajouter à `donnees/sources-manuelles.json`. C'est ce qui a été fait pour Newsmada, dont le flux refusait la plupart des lectures. |
 | Une source est « muette » | Aucun article nouveau depuis sept jours : vérifier que le site publie encore et que l'adresse du flux n'a pas changé. |
 | La page n'affiche pas mes dernières modifications | Attendre la fin de l'exécution dans l'onglet Actions, puis recharger la page en vidant le cache (`Ctrl` + `F5`). |
 | Les collectes planifiées se sont arrêtées | GitHub suspend les flux planifiés d'un dépôt resté 60 jours sans activité. Les réactiver dans l'onglet Actions. |
